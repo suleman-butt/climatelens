@@ -4,9 +4,38 @@
 
 The project will be implemented and tested locally before cloud resources are used. This reduces cost and makes data, feature, model, and API behavior easier to verify independently.
 
-## 2026-09-06: Four forecast targets
+## 2026-09-06: Three forecast targets, pollen dropped
 
-The first release keeps pollen, frost, solar, and wind so the project demonstrates three application perspectives. Pollen is subject to a feasibility check because DWD historical pollen data is a gridded index rather than consistent city-level ground truth. Any proxy will be labelled clearly.
+The project ships **three** next-day targets across **two** angles:
+
+| Target | Angle | Type | Source field(s) |
+|---|---|---|---|
+| Frost risk | Agriculture | Classification | `temperature_air_min_2m < 0` |
+| Solar potential | Energy | Regression | `radiation_global` (J/cm2/day -> kWh/m2) |
+| Wind potential | Energy | Regression | `wind_speed` -> power proxy (proportional to v^3) |
+
+**Pollen (Health angle) is dropped.** DWD's `wetterdienst` observation API
+exposes no pollen data; the only source is DWD's separate regional pollen-index
+archive (8 coarse regions, not city-level). Rather than ingest a second,
+mismatched data source or fabricate a synthetic proxy that would need its own
+caveats, the health angle is removed. The frost and wind targets are built from
+fields that are ~99-100% complete; solar is ~85-92% complete (see below).
+
+This keeps the pipeline free of imputation: features use only near-complete
+fields, and rows whose target is missing are simply excluded from that target's
+walk-forward train/test (not imputed). The cloud architecture - the actual
+subject of the deliverable - is unaffected.
+
+## 2026-09-06: Feature fields restricted to near-complete columns
+
+`sunshine_duration` is 100% missing for Berlin and Leipzig and 79% for Frankfurt
+(those primary stations don't report it), so it is excluded as a feature -
+`cloud_cover_total` (~99% present) carries the same signal.
+`radiation_sky_long_wave` (34% null) and `radiation_sky_short_wave_diffuse`
+(9% null) are not used. `snow_depth` (6% null) is excluded. Feature inputs:
+`temperature_air_{mean,min,max}_2m`, `temperature_air_min_0_05m`, `wind_speed`,
+`wind_gust_max`, `humidity`, `pressure_air_site`, `cloud_cover_total`,
+`precipitation_height`, plus calendar and fixed station metadata.
 
 ## 2026-09-06: Simplified initial compute
 
@@ -40,8 +69,7 @@ Only 56 DWD stations nationwide report daily global radiation, against 1284 for
 
 For 5 cities the solar station is 17-60 km away (Cologne 60 km is the worst).
 Daily global radiation is spatially smooth, so this is treated as an accepted
-data-availability limitation and documented per city, analogous to the pollen
-proxy - not a defect.
+data-availability limitation and documented per city - not a defect.
 
 `Dortmund` was replaced by `Bremen`: no station reporting wind + pressure exists
 within 30 km of Dortmund, whereas Bremen (11th most populous city) has one

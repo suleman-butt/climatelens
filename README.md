@@ -1,8 +1,7 @@
 # ClimateLens
 
-ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into next-day forecasts across three practical perspectives:
+ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into next-day forecasts across two practical perspectives:
 
-- **Health:** pollen load
 - **Agriculture:** frost risk
 - **Energy:** solar and wind potential
 
@@ -13,8 +12,8 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 ## Planned Features
 
 - Daily ingestion of DWD weather-station data for 12 German cities
-- Feature engineering for temperature, wind, radiation, humidity, pressure, and calendar effects
-- Four next-day forecast targets: pollen, frost, solar, and wind
+- Feature engineering for temperature, wind, humidity, pressure, cloud cover, and calendar effects
+- Three next-day forecast targets: frost, solar, and wind
 - Walk-forward model evaluation against transparent baselines
 - REST API and server-rendered dashboard
 - Versioned raw data, features, models, and evaluation metrics
@@ -25,12 +24,13 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 
 | Target | Perspective | Type | Description |
 |---|---|---|---|
-| Pollen load | Health | Regression | A 0-3 next-day pollen-load proxy |
 | Frost risk | Agriculture | Classification | Probability that next-day minimum temperature is below 0 C |
-| Solar potential | Energy | Regression | Next-day global radiation potential |
-| Wind potential | Energy | Regression | Wind power-potential proxy based on mean wind speed |
+| Solar potential | Energy | Regression | Next-day global radiation (kWh/m2), from DWD SOLAR stations |
+| Wind potential | Energy | Regression | Next-day mean wind speed as a power-potential proxy (proportional to v^3) |
 
-The pollen forecast is an explicitly documented modelling limitation. DWD historical pollen information is a gridded index rather than consistent city-level ground truth, so the project will either use a clearly labelled proxy or defer the target if the feasibility check does not support a defensible model.
+A fourth target, next-day pollen load (Health), was scoped out: the DWD
+observation API carries no pollen data, and the only alternative is DWD's
+separate coarse regional pollen-index archive. See [`docs/decisions.md`](docs/decisions.md).
 
 ## Architecture
 

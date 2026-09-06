@@ -12,9 +12,8 @@ each mapped to two stations, resolved once on the selection date and then frozen
   station within 30 km and was replaced by Bremen (2026-09-06).
 * ``solar_station_id`` - nearest active SOLAR station (global radiation only).
   Only 56 stations nationwide report daily radiation, so for Berlin, Munich,
-  Cologne, Essen and Hannover this station is 17-60 km away. This is a documented
-  data-availability limitation (see docs/decisions.md), analogous to the pollen
-  proxy.
+  Cologne, Essen and Hannover this station is 17-60 km away - a documented
+  data-availability limitation (see docs/decisions.md).
 
 Station selection date: 2026-09-06 (resolved via ``climatelens stations``).
 Any change to this table must be recorded in docs/project-log.md.

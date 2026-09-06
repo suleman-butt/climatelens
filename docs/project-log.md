@@ -74,3 +74,16 @@ acceptance criterion. (Per-cell nulls on individual days may still exist; those
 are handled in feature engineering, Phase 3.)
 
 Phase 2 complete.
+
+### Scope decision - pollen dropped (2026-09-06)
+
+Diagnostic on the backfill drove a scope cut. Targets are now **frost, solar,
+wind** (Agriculture + Energy angles); the Health/pollen target is removed - no
+pollen data in the DWD observation API and no appetite for a second data source
+or a synthetic proxy. Feature inputs are restricted to near-complete fields
+(`sunshine_duration` excluded: 100% null for Berlin/Leipzig; `radiation_sky_*`,
+`snow_depth` excluded). Solar target is ~85-92% complete (Cologne/Essen worst at
+~85%, and the most recent ~6 weeks are absent due to DWD's solar processing lag);
+those rows are excluded from the solar model's walk-forward split rather than
+imputed. See docs/decisions.md. README and dashboard drop from four cards to
+three.
