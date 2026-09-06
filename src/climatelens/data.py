@@ -14,7 +14,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from climatelens.config import CITIES, CITIES_BY_STATION, City, get_logger
+from climatelens.config import (
+    CITIES,
+    CLIMATE_STATION_TO_SLUG,
+    SOLAR_STATION_CITY_PAIRS,
+    City,
+    climate_station_ids,
+    get_logger,
+    solar_station_ids,
+)
 
 log = get_logger(__name__)
 
@@ -22,6 +30,14 @@ log = get_logger(__name__)
 
 #: Datasets requested from DWD at daily resolution.
 DWD_DATASETS: tuple[str, ...] = ("climate_summary", "solar")
+
+#: Parameters taken from the SOLAR dataset (its ``sunshine_duration`` is dropped -
+#: CLIMATE_SUMMARY already carries one from the primary station).
+SOLAR_KEEP_PARAMETERS: tuple[str, ...] = (
+    "radiation_global",
+    "radiation_sky_short_wave_diffuse",
+    "radiation_sky_long_wave",
+)
 
 #: Parameters every station must report for a date row to be usable.
 REQUIRED_PARAMETERS: tuple[str, ...] = (
@@ -50,8 +66,8 @@ VALUE_BOUNDS: dict[str, tuple[float, float]] = {
     "precipitation_height": (0.0, 500.0),
     "sunshine_duration": (0.0, 24.0),
     "snow_depth": (0.0, 500.0),
-    "cloud_cover_total": (0.0, 100.0),
-    "radiation_global": (0.0, 5000.0),
+    "cloud_cover_total": (0.0, 8.0),  # DWD reports cloud cover in eighths (octas)
+    "radiation_global": (0.0, 5000.0),  # joule/cm^2 per day (ts_convert_units=False)
     "radiation_sky_short_wave_diffuse": (0.0, 5000.0),
     "radiation_sky_long_wave": (0.0, 5000.0),
 }
@@ -87,56 +103,53 @@ class ValidationReport:
 # --- Fetching ----------------------------------------------------------------
 
 
-def _wetterdienst_request(station_ids: list[str], start: datetime, end: datetime):
-    """Build a DwdObservationRequest for the configured datasets."""
-    from wetterdienst import Settings
-    from wetterdienst.provider.dwd.observation import (
-        DwdObservationDataset,
-        DwdObservationPeriod,
-        DwdObservationRequest,
-        DwdObservationResolution,
-    )
+_RAW_LONG_COLUMNS = ["station_id", "dataset", "parameter", "date", "value", "quality"]
 
-    settings = Settings(
+
+def _dwd_settings():
+    from wetterdienst import Settings
+
+    # ts_convert_units=False keeps DWD's documented native units (deg C, m/s,
+    # hPa, %, octas, J/cm^2, hours) so VALUE_BOUNDS stay predictable.
+    # use_certifi=True avoids Windows system-trust-store gaps in aiohttp.
+    return Settings(
         ts_shape="long",
         ts_humanize=True,
-        ts_si_units=False,
+        ts_convert_units=False,
+        use_certifi=True,
     )
-    request = DwdObservationRequest(
-        parameter=[DwdObservationDataset.CLIMATE_SUMMARY, DwdObservationDataset.SOLAR],
-        resolution=DwdObservationResolution.DAILY,
-        period=[DwdObservationPeriod.HISTORICAL, DwdObservationPeriod.RECENT],
-        start_date=start,
-        end_date=end,
-        settings=settings,
-    )
-    return request.filter_by_station_id(station_id=station_ids)
 
 
-def fetch_observations(
+def _fetch_raw(
     station_ids: list[str],
+    parameters: list[tuple[str, str]],
     start: datetime,
     end: datetime,
     *,
-    max_retries: int = 4,
-    base_delay: float = 2.0,
+    max_retries: int,
+    base_delay: float,
 ) -> pd.DataFrame:
-    """Fetch daily observations for the given stations as a tidy long frame.
+    """One retrying wetterdienst pull -> tidy pandas long frame (no city column)."""
+    from wetterdienst.provider.dwd.observation import DwdObservationRequest
 
-    Retries with exponential backoff. Returns columns ``LONG_COLUMNS``.
-    """
     attempt = 0
     while True:
         attempt += 1
         try:
-            request = _wetterdienst_request(station_ids, start, end)
+            request = DwdObservationRequest(
+                parameters=parameters,
+                start_date=start,
+                end_date=end,
+                settings=_dwd_settings(),
+            ).filter_by_station_id(station_id=station_ids)
             values = request.values.all().df
             raw = values.to_pandas() if hasattr(values, "to_pandas") else pd.DataFrame(values)
             break
         except Exception as exc:  # noqa: BLE001 - network layer, log and retry
             if attempt > max_retries:
                 log.error(
-                    "dwd fetch failed permanently", extra={"attempts": attempt, "error": str(exc)}
+                    "dwd fetch failed permanently",
+                    extra={"attempts": attempt, "parameters": parameters, "error": str(exc)},
                 )
                 raise
             delay = base_delay * (2 ** (attempt - 1))
@@ -147,19 +160,60 @@ def fetch_observations(
             time.sleep(delay)
 
     if raw.empty:
-        log.warning("dwd fetch returned no rows", extra={"stations": len(station_ids)})
-        return pd.DataFrame(columns=LONG_COLUMNS)
-
-    raw = raw.rename(columns={"station_id": "station_id", "date": "date"})
+        return pd.DataFrame(columns=_RAW_LONG_COLUMNS)
     raw["station_id"] = raw["station_id"].astype(str).str.zfill(5)
     raw["date"] = pd.to_datetime(raw["date"], utc=True).dt.tz_convert(None).dt.normalize()
-    raw["city"] = raw["station_id"].map(
-        lambda s: CITIES_BY_STATION[s].slug if s in CITIES_BY_STATION else None
-    )
     for col in ("dataset", "parameter", "quality", "value"):
         if col not in raw.columns:
             raw[col] = pd.NA
-    return raw[LONG_COLUMNS].reset_index(drop=True)
+    for col in ("dataset", "parameter"):
+        if isinstance(raw[col].dtype, pd.CategoricalDtype):
+            raw[col] = raw[col].astype("string")
+    return raw[_RAW_LONG_COLUMNS]
+
+
+def fetch_observations(
+    start: datetime,
+    end: datetime,
+    *,
+    climate_ids: list[str] | None = None,
+    solar_ids: list[str] | None = None,
+    max_retries: int = 4,
+    base_delay: float = 2.0,
+) -> pd.DataFrame:
+    """Fetch CLIMATE_SUMMARY (primary stations) + SOLAR (solar stations).
+
+    Returns one tidy long frame with a resolved ``city`` column
+    (:data:`LONG_COLUMNS`). Solar rows are fanned out to every city that shares a
+    solar station. Retries each pull with exponential backoff.
+    """
+    climate_ids = list(climate_ids) if climate_ids is not None else climate_station_ids()
+    solar_ids = list(solar_ids) if solar_ids is not None else solar_station_ids()
+    kw = {"max_retries": max_retries, "base_delay": base_delay}
+
+    climate = _fetch_raw(climate_ids, [("daily", "climate_summary")], start, end, **kw)
+    climate["city"] = climate["station_id"].map(CLIMATE_STATION_TO_SLUG)
+
+    solar = _fetch_raw(solar_ids, [("daily", "solar")], start, end, **kw)
+    solar = solar[solar["parameter"].isin(SOLAR_KEEP_PARAMETERS)]
+    pairs = pd.DataFrame(SOLAR_STATION_CITY_PAIRS, columns=["station_id", "city"])
+    solar = solar.merge(pairs, on="station_id", how="inner")
+
+    long_df = pd.concat([climate, solar], ignore_index=True).dropna(subset=["city"])
+    if long_df.empty:
+        log.warning(
+            "dwd fetch returned no usable rows",
+            extra={"climate_stations": len(climate_ids), "solar_stations": len(solar_ids)},
+        )
+        return pd.DataFrame(columns=LONG_COLUMNS)
+    log.info(
+        "dwd fetch ok",
+        extra={
+            "climate_rows": int((long_df["dataset"] == "climate_summary").sum()),
+            "solar_rows": int((long_df["dataset"] == "solar").sum()),
+        },
+    )
+    return long_df[LONG_COLUMNS].reset_index(drop=True)
 
 
 # --- Reshaping & validation -------------------------------------------------
@@ -170,10 +224,13 @@ def to_wide(long_df: pd.DataFrame) -> pd.DataFrame:
     if long_df.empty:
         return pd.DataFrame(columns=["city", "station_id", "date"])
     frame = long_df.dropna(subset=["city", "parameter"]).copy()
+    for col in ("city", "parameter", "dataset"):
+        if isinstance(frame[col].dtype, pd.CategoricalDtype):
+            frame[col] = frame[col].astype("string")
     frame = frame.sort_values(["city", "date", "dataset"])
     frame = frame.drop_duplicates(subset=["city", "date", "parameter"], keep="last")
     wide = frame.pivot_table(
-        index=["city", "date"], columns="parameter", values="value", aggfunc="last"
+        index=["city", "date"], columns="parameter", values="value", aggfunc="last", observed=True
     ).reset_index()
     wide.columns.name = None
     station_map = long_df.dropna(subset=["city"]).groupby("city")["station_id"].first().to_dict()
@@ -285,7 +342,8 @@ def read_raw(base_uri: str, start: date | None = None, end: date | None = None) 
 class IngestResult:
     start: str
     end: str
-    stations: int
+    climate_stations: int
+    solar_stations: int
     rows_fetched: int
     rows_written: int
     partitions_written: int
@@ -299,19 +357,26 @@ def ingest_range(
     cities: tuple[City, ...] = CITIES,
 ) -> IngestResult:
     """Fetch -> validate -> write for a date range. Used by ``jobs.py``."""
-    ids = [c.dwd_station_id for c in cities]
+    climate_ids = sorted({c.station_id for c in cities})
+    solar_ids = sorted({c.solar_station_id for c in cities})
     log.info(
         "ingest start",
-        extra={"start": start.isoformat(), "end": end.isoformat(), "stations": len(ids)},
+        extra={
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "climate_stations": len(climate_ids),
+            "solar_stations": len(solar_ids),
+        },
     )
-    long_df = fetch_observations(ids, start, end)
+    long_df = fetch_observations(start, end, climate_ids=climate_ids, solar_ids=solar_ids)
     wide = to_wide(long_df)
     clean, report = validate(wide)
     written = write_raw_partitions(clean, base_uri)
     result = IngestResult(
         start=start.strftime("%Y-%m-%d"),
         end=end.strftime("%Y-%m-%d"),
-        stations=len(ids),
+        climate_stations=len(climate_ids),
+        solar_stations=len(solar_ids),
         rows_fetched=len(long_df),
         rows_written=len(clean),
         partitions_written=len(written),
@@ -335,61 +400,92 @@ def _haversine_km_vec(lat1: float, lon1: float, lat2, lon2):
     return 2 * r * np.arcsin(np.sqrt(a))
 
 
-def resolve_stations(cities: tuple[City, ...] = CITIES) -> pd.DataFrame:
-    """For each city, find the nearest station reporting both datasets.
+#: Station must still be reporting on/after this date to be eligible.
+STATION_ACTIVE_SINCE = "2026-06-01"
+#: Station must have started on/before this date (covers a 3-year backfill).
+STATION_HISTORY_BEFORE = "2023-01-01"
 
-    Online: needs HTTPS to opendata.dwd.de. Returns a frame with the current
-    assignment and the resolved nearest qualifying station for comparison.
-    """
-    from wetterdienst.provider.dwd.observation import (
-        DwdObservationDataset,
-        DwdObservationPeriod,
-        DwdObservationRequest,
-        DwdObservationResolution,
+
+def _station_catalog(dataset: str) -> pd.DataFrame:
+    """Active, long-history DWD stations for a daily dataset (online)."""
+    from wetterdienst.provider.dwd.observation import DwdObservationRequest
+
+    df = DwdObservationRequest(parameters=[("daily", dataset)], settings=_dwd_settings()).all().df
+    cat = df.to_pandas() if hasattr(df, "to_pandas") else pd.DataFrame(df)
+    cat["station_id"] = cat["station_id"].astype(str).str.zfill(5)
+    cat["start_date"] = pd.to_datetime(cat["start_date"], utc=True)
+    cat["end_date"] = pd.to_datetime(cat["end_date"], utc=True)
+    active = cat["end_date"] >= pd.Timestamp(STATION_ACTIVE_SINCE, tz="UTC")
+    deep = cat["start_date"] <= pd.Timestamp(STATION_HISTORY_BEFORE, tz="UTC")
+    return cat[active & deep].reset_index(drop=True)
+
+
+def _ranked_by_distance(catalog: pd.DataFrame, lat: float, lon: float) -> pd.DataFrame:
+    d = _haversine_km_vec(
+        lat,
+        lon,
+        catalog["latitude"].astype(float).to_numpy(),
+        catalog["longitude"].astype(float).to_numpy(),
     )
+    return catalog.assign(distance_km=d).sort_values("distance_km").reset_index(drop=True)
 
-    def _station_frame(dataset: DwdObservationDataset) -> pd.DataFrame:
-        req = DwdObservationRequest(
-            parameter=[dataset],
-            resolution=DwdObservationResolution.DAILY,
-            period=[DwdObservationPeriod.HISTORICAL, DwdObservationPeriod.RECENT],
-        )
-        df = req.all().df
-        return df.to_pandas() if hasattr(df, "to_pandas") else pd.DataFrame(df)
 
-    summary = _station_frame(DwdObservationDataset.CLIMATE_SUMMARY)
-    solar = _station_frame(DwdObservationDataset.SOLAR)
-    solar_ids = set(solar["station_id"].astype(str).str.zfill(5))
-    qualifying = summary[summary["station_id"].astype(str).str.zfill(5).isin(solar_ids)].copy()
-    qualifying["station_id"] = qualifying["station_id"].astype(str).str.zfill(5)
+def _reports_core_instruments(station_id: str) -> bool:
+    """True if the station actually measured wind AND pressure in the last ~45 days.
 
-    lat = qualifying["latitude"].astype(float).to_numpy()
-    lon = qualifying["longitude"].astype(float).to_numpy()
+    Many DWD ``climate_summary`` stations only record temperature and
+    precipitation; distance alone is not enough to pick a primary station.
+    """
+    end = datetime.now(UTC)
+    start = end - timedelta(days=45)
+    probe = _fetch_raw(
+        [station_id],
+        [
+            ("daily", "climate_summary", "wind_speed"),
+            ("daily", "climate_summary", "pressure_air_site"),
+        ],
+        start,
+        end,
+        max_retries=1,
+        base_delay=1.0,
+    )
+    if probe.empty:
+        return False
+    seen = probe.dropna(subset=["value"]).groupby("parameter").size()
+    return bool(seen.get("wind_speed", 0)) and bool(seen.get("pressure_air_site", 0))
+
+
+def resolve_stations(cities: tuple[City, ...] = CITIES) -> pd.DataFrame:
+    """Check the frozen mapping against live DWD (online, needs HTTPS to DWD).
+
+    For each city, resolve the nearest active long-history SOLAR station and the
+    nearest CLIMATE_SUMMARY station that also reports wind + pressure, then
+    compare both to what ``config.CITIES`` has pinned.
+    """
+    climate_cat = _station_catalog("climate_summary")
+    solar_cat = _station_catalog("solar")
 
     rows = []
     for city in cities:
-        distance_km = _haversine_km_vec(city.latitude, city.longitude, lat, lon)
-        dists = qualifying.assign(distance_km=distance_km).sort_values("distance_km")
-        best = dists.iloc[0] if not dists.empty else None
+        ranked = _ranked_by_distance(climate_cat, city.centre_latitude, city.centre_longitude)
+        k = next(
+            (r for r in ranked.head(15).itertuples() if _reports_core_instruments(r.station_id)),
+            ranked.iloc[0],
+        )
+        s = _ranked_by_distance(solar_cat, city.centre_latitude, city.centre_longitude).iloc[0]
         rows.append(
             {
                 "city": city.name,
-                "slug": city.slug,
-                "configured_station_id": city.dwd_station_id,
-                "configured_station_name": city.station_name,
-                "resolved_station_id": None if best is None else best["station_id"],
-                "resolved_station_name": None if best is None else best.get("name"),
-                "resolved_distance_km": None
-                if best is None
-                else round(float(best["distance_km"]), 2),
-                "resolved_latitude": None if best is None else round(float(best["latitude"]), 4),
-                "resolved_longitude": None if best is None else round(float(best["longitude"]), 4),
-                "resolved_elevation_m": None
-                if best is None
-                else round(float(best["height"]), 1)
-                if "height" in dists.columns
-                else None,
-                "matches_config": best is not None and best["station_id"] == city.dwd_station_id,
+                "cfg_station": city.station_id,
+                "cfg_km": city.station_distance_km,
+                "live_station": k.station_id,
+                "live_km": round(float(k.distance_km), 2),
+                "station_ok": k.station_id == city.station_id,
+                "cfg_solar": city.solar_station_id,
+                "cfg_solar_km": city.solar_distance_km,
+                "live_solar": s["station_id"],
+                "live_solar_km": round(float(s["distance_km"]), 2),
+                "solar_ok": s["station_id"] == city.solar_station_id,
             }
         )
     return pd.DataFrame(rows)

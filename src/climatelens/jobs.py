@@ -51,17 +51,17 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
 
 def _cmd_stations(args: argparse.Namespace) -> int:
     frame = resolve_stations()
-    with_pd = frame.to_string(index=False)
-    print(with_pd)
-    mismatches = frame.loc[~frame["matches_config"]]
-    if len(mismatches):
+    print(frame.to_string(index=False))
+    drift = frame.loc[~(frame["station_ok"] & frame["solar_ok"])]
+    if len(drift):
         print(
-            f"\n{len(mismatches)} of {len(frame)} cities do not match config.py "
-            "- review distances and update CITIES if needed.",
+            f"\n{len(drift)} of {len(frame)} cities have drifted from the nearest live "
+            "station. Review the distances; update config.CITIES and log the change "
+            "only if a move is warranted.",
             file=sys.stderr,
         )
         return 1
-    print("\nAll configured stations match the nearest qualifying DWD station.")
+    print("\nEvery configured station is still the nearest active long-history DWD station.")
     return 0
 
 

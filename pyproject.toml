@@ -14,11 +14,11 @@ dependencies = [
     "google-cloud-storage==2.19.0",
     "lightgbm==4.5.0",
     "pandas==2.2.3",
-    "pyarrow==18.1.0",
+    "pyarrow==25.0.1",
     "pydantic-settings==2.7.1",
     "scikit-learn==1.6.1",
     "uvicorn[standard]==0.34.0",
-    "wetterdienst==0.97.0",
+    "wetterdienst==0.136.0",
 ]
 
 [project.optional-dependencies]

@@ -1,16 +1,22 @@
 """Runtime configuration and the fixed city -> DWD station universe.
 
-Selection rule (spec 4.1): the 12 most populous German cities that have a DWD
-observation station reporting temperature, wind and radiation within 15 km of the
-city centre. The mapping is frozen on the selection date below and is **never**
-resolved dynamically at runtime - reproducibility beats currency.
+Selection rule (spec 4.1, as implemented): the 12 most populous German cities,
+each mapped to two stations, resolved once on the selection date and then frozen
+(never resolved dynamically at runtime - reproducibility beats currency):
 
-Station selection date: 2026-09-06
+* ``station_id``       - nearest active, long-history CLIMATE_SUMMARY station
+  that actually reports wind + pressure (many only record temperature and
+  precipitation). Temperature, wind, humidity, pressure, sunshine, cloud. Within
+  15 km for every city except Cologne (16.0 km - nearest is Koeln-Bonn airport).
+  Frankfurt uses Offenbach-Wetterpark (7.8 km). Dortmund has no qualifying
+  station within 30 km and was replaced by Bremen (2026-09-06).
+* ``solar_station_id`` - nearest active SOLAR station (global radiation only).
+  Only 56 stations nationwide report daily radiation, so for Berlin, Munich,
+  Cologne, Essen and Hannover this station is 17-60 km away. This is a documented
+  data-availability limitation (see docs/decisions.md), analogous to the pollen
+  proxy.
 
-The ``dwd_station_id`` values below are seeded from well-known DWD identifiers and
-the coordinates are official city-centre points. Run ``climatelens stations``
-once (needs outbound HTTPS to opendata.dwd.de) to verify each station still
-reports CLIMATE_SUMMARY + SOLAR within 15 km and to print a ready-to-paste block.
+Station selection date: 2026-09-06 (resolved via ``climatelens stations``).
 Any change to this table must be recorded in docs/project-log.md.
 """
 
@@ -72,44 +78,65 @@ def get_settings() -> Settings:
 
 @dataclass(frozen=True, slots=True)
 class City:
-    """A city in the fixed universe and its assigned DWD station."""
+    """A city in the fixed universe and its two assigned DWD stations."""
 
     name: str
     slug: str
-    dwd_station_id: str
+    centre_latitude: float
+    centre_longitude: float
+    # Primary station: temperature, wind, humidity, pressure, sunshine, cloud.
+    station_id: str
     station_name: str
-    latitude: float
-    longitude: float
-    elevation_m: float
+    station_latitude: float
+    station_longitude: float
+    station_elevation_m: float
+    station_distance_km: float
+    # Solar station: daily global radiation only (sparse network, may be far).
+    solar_station_id: str
+    solar_station_name: str
+    solar_distance_km: float
 
 
-# 12 cities, ordered by population. station_name / dwd_station_id / elevation_m
-# are seeded values pending an online check via ``climatelens stations``.
+# 12 cities, ordered by population. Resolved via ``climatelens stations`` on the
+# selection date; do not hand-edit without re-running it and logging the change.
+# Fields: name, slug, centre lat/lon, station id/name/lat/lon/elevation_m/dist_km,
+#         solar station id/name/dist_km.
+# fmt: off
 CITIES: tuple[City, ...] = (
-    City("Berlin", "berlin", "00433", "Berlin-Tempelhof", 52.5200, 13.4050, 48.0),
-    City("Hamburg", "hamburg", "01975", "Hamburg-Fuhlsbuettel", 53.5511, 9.9937, 11.0),
-    City("Munich", "munich", "03379", "Muenchen-Stadt", 48.1372, 11.5755, 515.0),
-    City("Cologne", "cologne", "02667", "Koeln-Bonn", 50.9375, 6.9603, 92.0),
-    City("Frankfurt am Main", "frankfurt", "01420", "Frankfurt-Main", 50.1109, 8.6821, 100.0),
-    City("Stuttgart", "stuttgart", "04928", "Stuttgart-Schnarrenberg", 48.7758, 9.1829, 314.0),
-    City("Dortmund", "dortmund", "01303", "Dortmund", 51.5136, 7.4653, 125.0),
-    City("Essen", "essen", "01303", "Essen-Bredeney", 51.4556, 7.0116, 150.0),
-    City("Leipzig", "leipzig", "02928", "Leipzig-Holzhausen", 51.3397, 12.3731, 138.0),
-    City("Dresden", "dresden", "01048", "Dresden-Klotzsche", 51.0504, 13.7373, 227.0),
-    City("Hannover", "hannover", "02014", "Hannover", 52.3759, 9.7320, 55.0),
-    City("Nuremberg", "nuremberg", "03668", "Nuernberg", 49.4521, 11.0767, 314.0),
+    City("Berlin", "berlin", 52.5200, 13.4050, "00433", "Berlin-Tempelhof", 52.4676, 13.4020, 48.0, 5.83, "03987", "Potsdam", 27.89),  # noqa: E501
+    City("Hamburg", "hamburg", 53.5511, 9.9937, "01975", "Hamburg-Fuhlsbuettel", 53.6332, 9.9881, 11.0, 9.14, "01975", "Hamburg-Fuhlsbuettel", 9.14),  # noqa: E501
+    City("Munich", "munich", 48.1372, 11.5755, "03379", "Muenchen-Stadt", 48.1632, 11.5429, 515.0, 3.77, "05404", "Weihenstephan-Duernast", 30.78),  # noqa: E501
+    City("Cologne", "cologne", 50.9375, 6.9603, "02667", "Koeln-Bonn", 50.8645, 7.1575, 91.0, 16.04, "07365", "Bochum Ruhruniversitaet", 60.32),  # noqa: E501
+    City("Frankfurt am Main", "frankfurt", 50.1109, 8.6821, "07341", "Offenbach-Wetterpark", 50.0900, 8.7862, 119.0, 7.78, "01420", "Frankfurt-Main", 14.87),  # noqa: E501
+    City("Stuttgart", "stuttgart", 48.7758, 9.1829, "04928", "Stuttgart Schnarrenberg", 48.8281, 9.2000, 314.0, 5.95, "04928", "Stuttgart Schnarrenberg", 5.95),  # noqa: E501
+    City("Essen", "essen", 51.4556, 7.0116, "01303", "Essen-Bredeney", 51.4041, 6.9677, 150.0, 6.49, "07365", "Bochum Ruhruniversitaet", 17.44),  # noqa: E501
+    City("Leipzig", "leipzig", 51.3397, 12.3731, "02928", "Leipzig-Holzhausen", 51.3151, 12.4462, 138.0, 5.77, "02932", "Leipzig-Halle", 14.05),  # noqa: E501
+    City("Bremen", "bremen", 53.0793, 8.8017, "00691", "Bremen", 53.0451, 8.7981, 4.0, 3.80, "00691", "Bremen", 3.80),  # noqa: E501
+    City("Dresden", "dresden", 51.0504, 13.7373, "01048", "Dresden-Klotzsche", 51.1278, 13.7543, 228.0, 8.69, "01048", "Dresden-Klotzsche", 8.69),  # noqa: E501
+    City("Hannover", "hannover", 52.3759, 9.7320, "02014", "Hannover", 52.4644, 9.6779, 55.0, 10.50, "00662", "Braunschweig", 49.44),  # noqa: E501
+    City("Nuremberg", "nuremberg", 49.4521, 11.0767, "03668", "Nuernberg", 49.5030, 11.0549, 314.0, 5.87, "03668", "Nuernberg", 5.87),  # noqa: E501
 )
+# fmt: on
 
 CITIES_BY_SLUG: dict[str, City] = {c.slug: c for c in CITIES}
-CITIES_BY_STATION: dict[str, City] = {c.dwd_station_id: c for c in CITIES}
+#: Primary station id -> city slug (one-to-one).
+CLIMATE_STATION_TO_SLUG: dict[str, str] = {c.station_id: c.slug for c in CITIES}
+#: (solar station id, city slug) pairs - one solar station can feed several cities.
+SOLAR_STATION_CITY_PAIRS: tuple[tuple[str, str], ...] = tuple(
+    (c.solar_station_id, c.slug) for c in CITIES
+)
 
 
 def city_slugs() -> list[str]:
     return [c.slug for c in CITIES]
 
 
-def station_ids() -> list[str]:
-    return [c.dwd_station_id for c in CITIES]
+def climate_station_ids() -> list[str]:
+    return sorted({c.station_id for c in CITIES})
+
+
+def solar_station_ids() -> list[str]:
+    return sorted({c.solar_station_id for c in CITIES})
 
 
 class _JsonFormatter(logging.Formatter):
