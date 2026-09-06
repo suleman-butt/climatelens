@@ -66,5 +66,11 @@ sunshine hours, `cloud_cover_total` in **octas 0-8** (VALUE_BOUNDS updated from
 features, Phase 3). Validation on the 3-day sample: 36/36 rows kept, 0 impossible
 values, 0 gaps, 0 missing parameters.
 
-TODO before Phase 3: run `climatelens ingest --backfill-years 3` and record the
-full row counts / gap counts / any impossible values here (spec 9).
+**Backfill (`climatelens ingest --backfill-years 3`, 2023-09-05 -> 2026-09-05).**
+Clean: 212,112 long rows fetched -> **13,164 rows written** (12 cities x 1097
+days, i.e. complete), 1097 date partitions. 0 duplicate rows, 0 impossible
+values, 0 per-city missing parameters, 0 calendar gaps. Meets the Phase 2
+acceptance criterion. (Per-cell nulls on individual days may still exist; those
+are handled in feature engineering, Phase 3.)
+
+Phase 2 complete.
