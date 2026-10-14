@@ -121,9 +121,11 @@
     footer { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
     footer h2 { margin: 0 0 4px; font-size: 13px; color: var(--text); }
     footer p { margin: 0 0 12px; max-width: 860px; }
-    footer .links { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--faint); font-size: 12.5px; }
+    footer .credit { margin: 0 0 4px; color: var(--muted); font-weight: 600; }
+    footer .links { margin: 0; display: flex; flex-wrap: wrap; color: var(--faint); font-size: 12.5px; }
+    /* Separator dots between items; a wrapped line starts without one. */
+    footer .links span + span::before { content: "·"; margin: 0 8px; }
     footer a { color: inherit; }
-    footer .credit { color: var(--muted); font-weight: 600; }
 
     @media (max-width: 1000px) {
       .cards { gap: 10px; }
@@ -320,12 +322,13 @@
     {% endif %}
     <h2>About these forecasts</h2>
     <p>{{ disclaimer }}</p>
-    <div class="links">
-      <span class="credit">Created by Suleman Butt &middot; MSc DevOps &amp; Cloud Computing, IU International University</span>
-      <span>Source data: Deutscher Wetterdienst (DWD) open data</span>
-      <span>App v{{ app_version }}{% if version %} &middot; model {{ version }}{% endif %}</span>
-      <span><a href="/docs">API documentation</a></span>
-    </div>
+    <p class="credit">Developed by Suleman Butt &middot; MSc DevOps &amp; Cloud Computing, IU International University</p>
+    <p class="links">
+      <span>Data: Deutscher Wetterdienst (DWD) open data</span>
+      <span><a href="/docs">API Documentation</a></span>
+      <span>App v{{ app_version }}</span>
+      {% if version %}<span title="Trained {{ version[:4] }}-{{ version[4:6] }}-{{ version[6:8] }} {{ version[9:11] }}:{{ version[11:13] }} UTC; changes after each retrain">Model {{ version }}</span>{% endif %}
+    </p>
   </footer>
 </div>
 

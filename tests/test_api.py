@@ -289,7 +289,7 @@ def test_dashboard_brand_and_how_it_works(client):
     assert "How ClimateLens works" in html
     for step in ("Collect", "Learn", "Forecast", "Stay up to date"):
         assert f"</span>{step}</h3>" in html
-    assert "Created by Suleman Butt" in html
+    assert "Developed by Suleman Butt" in html
     assert html.count("MSc DevOps &amp; Cloud Computing") == 1  # credited once, in the footer
     assert "IU International University" in html
     assert "18 weather stations serving 12 cities" in html
@@ -391,4 +391,17 @@ def test_dashboard_shows_app_version_and_update_note(client):
 
     html = client.get("/").text
     assert f"App v{__version__}" in html
+    assert "Model 20260101T000000Z" in html  # the served bundle, read at runtime
+    assert "Data: Deutscher Wetterdienst (DWD) open data" in html
+    assert "API Documentation" in html
     assert "Updated daily from DWD observations" in html
+
+
+def test_dashboard_template_is_clean_utf8():
+    from pathlib import Path
+
+    import climatelens
+
+    raw = (Path(climatelens.__file__).parent / "templates" / "dashboard.html").read_bytes()
+    assert b"\x00" not in raw
+    raw.decode("utf-8")
