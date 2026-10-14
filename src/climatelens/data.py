@@ -6,10 +6,13 @@ All cloud and network I/O for the project lives here (and in ``jobs.py``).
 
 from __future__ import annotations
 
+import io
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -291,49 +294,143 @@ def _is_gcs(uri: str) -> bool:
     return uri.startswith("gs://")
 
 
+# --- Storage: local paths and gs:// behind one small interface ---------------
+#
+# Every artefact is addressed by a URI: a local path, or gs://bucket/key in the
+# cloud. Only these helpers know the difference.
+
+
+def _join(base: str, *parts: str) -> str:
+    if _is_gcs(base):
+        return "/".join([base.rstrip("/"), *parts])
+    return str(Path(base, *parts))
+
+
+def _split_gcs(uri: str) -> tuple[str, str]:
+    bucket, _, key = uri.removeprefix("gs://").partition("/")
+    return bucket, key
+
+
+@lru_cache
+def _gcs_client():
+    from google.cloud import storage
+
+    return storage.Client()
+
+
+def _gcs_blob(uri: str):
+    bucket, key = _split_gcs(uri)
+    return _gcs_client().bucket(bucket).blob(key)
+
+
+def _write_bytes(uri: str, data: bytes) -> None:
+    if _is_gcs(uri):
+        _gcs_blob(uri).upload_from_string(data)
+        return
+    target = Path(uri)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def _read_bytes(uri: str) -> bytes | None:
+    """File contents, or None if it does not exist."""
+    if _is_gcs(uri):
+        from google.api_core.exceptions import NotFound
+
+        try:
+            return _gcs_blob(uri).download_as_bytes()
+        except NotFound:
+            return None
+    target = Path(uri)
+    return target.read_bytes() if target.exists() else None
+
+
+def _exists(uri: str) -> bool:
+    return _gcs_blob(uri).exists() if _is_gcs(uri) else Path(uri).exists()
+
+
+def _list(base: str) -> list[str]:
+    """URIs of all files under ``base`` (recursively)."""
+    if _is_gcs(base):
+        bucket, key = _split_gcs(base)
+        prefix = key.rstrip("/") + "/" if key else ""
+        return [f"gs://{bucket}/{b.name}" for b in _gcs_client().list_blobs(bucket, prefix=prefix)]
+    root = Path(base)
+    return [str(p) for p in root.rglob("*") if p.is_file()] if root.exists() else []
+
+
+def fingerprint(uri: str) -> str | None:
+    """Cheap change marker (GCS generation or local mtime); None if missing."""
+    if _is_gcs(uri):
+        bucket, key = _split_gcs(uri)
+        blob = _gcs_client().bucket(bucket).get_blob(key)
+        return None if blob is None else str(blob.generation)
+    target = Path(uri)
+    return str(target.stat().st_mtime_ns) if target.exists() else None
+
+
+def _to_parquet_bytes(frame: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    frame.to_parquet(buffer, index=False)
+    return buffer.getvalue()
+
+
+# --- Raw Parquet storage ----------------------------------------------------
+
+RAW_FILE = "stations.parquet"
+
+
+def _partition_day(uri: str) -> date | None:
+    """The date of a ``.../date=YYYY-MM-DD/stations.parquet`` URI, else None."""
+    parts = uri.replace("\\", "/").split("/")
+    if len(parts) < 2 or parts[-1] != RAW_FILE or not parts[-2].startswith("date="):
+        return None
+    try:
+        return datetime.strptime(parts[-2].removeprefix("date="), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
 def write_raw_partitions(wide: pd.DataFrame, base_uri: str) -> list[str]:
     """Write one ``date=YYYY-MM-DD/stations.parquet`` file per date.
 
     Re-writing an existing date overwrites it cleanly (no duplicate rows).
     """
-    if _is_gcs(base_uri):
-        raise NotImplementedError(
-            "GCS raw storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
-        )
     if wide.empty:
         return []
     written: list[str] = []
-    root = Path(base_uri)
     for day, group in wide.groupby(wide["date"].dt.strftime("%Y-%m-%d")):
-        part_dir = root / f"date={day}"
-        part_dir.mkdir(parents=True, exist_ok=True)
-        target = part_dir / "stations.parquet"
-        group.reset_index(drop=True).to_parquet(target, index=False)
-        written.append(str(target))
+        target = _join(base_uri, f"date={day}", RAW_FILE)
+        _write_bytes(target, _to_parquet_bytes(group.reset_index(drop=True)))
+        written.append(target)
     log.info("wrote raw partitions", extra={"partitions": len(written), "base": base_uri})
     return written
 
 
 def read_raw(base_uri: str, start: date | None = None, end: date | None = None) -> pd.DataFrame:
     """Read raw partitions back into a single wide frame, optional date filter."""
-    if _is_gcs(base_uri):
-        raise NotImplementedError(
-            "GCS raw storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
-        )
-    root = Path(base_uri)
-    if not root.exists():
+    parts = []
+    for uri in _list(base_uri):
+        day = _partition_day(uri)
+        if day is None or (start and day < start) or (end and day > end):
+            continue
+        parts.append((day, uri))
+    if not parts:
         return pd.DataFrame()
-    frames = []
-    for part in sorted(root.glob("date=*/stations.parquet")):
-        day = datetime.strptime(part.parent.name.removeprefix("date="), "%Y-%m-%d").date()
-        if start and day < start:
-            continue
-        if end and day > end:
-            continue
-        frames.append(pd.read_parquet(part))
+    uris = [uri for _, uri in sorted(parts)]
+    # Over GCS each partition is one request; fetch them concurrently.
+    with ThreadPoolExecutor(max_workers=16 if _is_gcs(base_uri) else 1) as pool:
+        blobs = list(pool.map(_read_bytes, uris))
+    frames = [pd.read_parquet(io.BytesIO(b)) for b in blobs if b is not None]
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True).sort_values(["city", "date"]).reset_index(drop=True)
+
+
+def latest_raw_date(base_uri: str) -> date | None:
+    """Most recent stored partition date, or None if nothing is stored."""
+    days = [d for d in (_partition_day(u) for u in _list(base_uri)) if d is not None]
+    return max(days) if days else None
 
 
 # --- Feature table storage --------------------------------------------------
@@ -341,27 +438,15 @@ def read_raw(base_uri: str, start: date | None = None, end: date | None = None) 
 
 def write_features(features: pd.DataFrame, uri: str) -> str:
     """Write the feature table as a single Parquet file (clean overwrite)."""
-    if _is_gcs(uri):
-        raise NotImplementedError(
-            "GCS feature storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
-        )
-    target = Path(uri)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    features.to_parquet(target, index=False)
+    _write_bytes(uri, _to_parquet_bytes(features))
     log.info("wrote feature table", extra={"rows": len(features), "uri": uri})
-    return str(target)
+    return uri
 
 
 def read_features(uri: str) -> pd.DataFrame:
     """Read the feature table, or an empty frame if it has not been built yet."""
-    if _is_gcs(uri):
-        raise NotImplementedError(
-            "GCS feature storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
-        )
-    target = Path(uri)
-    if not target.exists():
-        return pd.DataFrame()
-    return pd.read_parquet(target)
+    data = _read_bytes(uri)
+    return pd.DataFrame() if data is None else pd.read_parquet(io.BytesIO(data))
 
 
 # --- Model bundle storage ----------------------------------------------------
@@ -378,37 +463,32 @@ def write_model_bundle(
 ) -> str:
     """Write ``<base>/<version>/`` (one joblib per target + JSON) and move LATEST.
 
-    Bundles are immutable: an existing version directory is never overwritten.
+    Bundles are immutable: an existing version is never overwritten.
     """
-    if _is_gcs(base_uri):
-        raise NotImplementedError(
-            "GCS model storage is wired up in Phase 6; set CLIMATELENS_MODEL_DIR for now"
-        )
     import joblib
 
     version = str(manifest["version"])
-    root = Path(base_uri)
-    bundle = root / version
-    bundle.mkdir(parents=True, exist_ok=False)
+    bundle = _join(base_uri, version)
+    if _exists(_join(bundle, "manifest.json")):
+        raise FileExistsError(f"model bundle {version} already exists")
     for target, model in models.items():
-        joblib.dump(model, bundle / f"{target}.joblib")
-    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
-    (bundle / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str))
-    # Pointer is written last, so readers never see a half-written bundle.
-    (root / LATEST_POINTER).write_text(version + "\n")
-    log.info("wrote model bundle", extra={"version": version, "uri": str(bundle)})
-    return str(bundle)
+        buffer = io.BytesIO()
+        joblib.dump(model, buffer)
+        _write_bytes(_join(bundle, f"{target}.joblib"), buffer.getvalue())
+    _write_bytes(_join(bundle, "metrics.json"), json.dumps(metrics, indent=2, default=str).encode())
+    # The manifest marks the bundle complete and the pointer moves last, so
+    # readers never see a half-written bundle.
+    _write_bytes(
+        _join(bundle, "manifest.json"), json.dumps(manifest, indent=2, default=str).encode()
+    )
+    _write_bytes(_join(base_uri, LATEST_POINTER), (version + "\n").encode())
+    log.info("wrote model bundle", extra={"version": version, "uri": bundle})
+    return bundle
 
 
 def latest_model_version(base_uri: str) -> str | None:
-    if _is_gcs(base_uri):
-        raise NotImplementedError(
-            "GCS model storage is wired up in Phase 6; set CLIMATELENS_MODEL_DIR for now"
-        )
-    pointer = Path(base_uri) / LATEST_POINTER
-    if not pointer.exists():
-        return None
-    return pointer.read_text().strip() or None
+    data = _read_bytes(_join(base_uri, LATEST_POINTER))
+    return (data.decode().strip() or None) if data else None
 
 
 def read_model_bundle(
@@ -420,10 +500,16 @@ def read_model_bundle(
     version = version or latest_model_version(base_uri)
     if version is None:
         raise FileNotFoundError(f"no model bundle under {base_uri}; run 'climatelens train'")
-    bundle = Path(base_uri) / version
-    manifest = json.loads((bundle / "manifest.json").read_text())
-    metrics = json.loads((bundle / "metrics.json").read_text())
-    models = {t: joblib.load(bundle / f"{t}.joblib") for t in manifest["targets"]}
+    bundle = _join(base_uri, version)
+    manifest_bytes = _read_bytes(_join(bundle, "manifest.json"))
+    if manifest_bytes is None:
+        raise FileNotFoundError(f"model bundle {version} is missing its manifest")
+    manifest = json.loads(manifest_bytes)
+    metrics = json.loads(_read_bytes(_join(bundle, "metrics.json")) or b"{}")
+    models = {
+        t: joblib.load(io.BytesIO(_read_bytes(_join(bundle, f"{t}.joblib")) or b""))
+        for t in manifest["targets"]
+    }
     return models, manifest, metrics
 
 

@@ -1,7 +1,7 @@
 """HTTP API and server-rendered dashboard.
 
 Public, read-only: ``/``, ``/cities``, ``/forecast``, ``/forecast/{city}``,
-``/metrics``, ``/healthz``. Protected: ``POST /jobs/ingest`` and
+``/metrics``, ``/health`` (``/healthz``). Protected: ``POST /jobs/ingest`` and
 ``POST /jobs/train`` require ``Authorization: Bearer <CLIMATELENS_JOBS_TOKEN>``
 and are disabled when no token is configured.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hmac
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -20,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from climatelens import __version__
 from climatelens.config import CITIES, CITIES_BY_SLUG, Settings, get_logger, get_settings
+from climatelens.data import fingerprint, latest_model_version
 from climatelens.pipeline import (
     PipelineError,
     run_features,
@@ -48,16 +50,36 @@ templates.env.filters["month_name"] = lambda iso: date.fromisoformat(iso).strfti
 
 
 class ServiceCache:
-    """Loads the forecast service once; job endpoints invalidate it after writes."""
+    """Loads the forecast service once and reloads it when its inputs change.
 
-    def __init__(self) -> None:
+    Job endpoints on this instance invalidate it directly. Other instances (and
+    writes made elsewhere) are picked up by re-checking the LATEST model pointer
+    and the feature table's fingerprint at most every ``refresh_seconds``.
+    """
+
+    def __init__(self, refresh_seconds: float = 60.0) -> None:
         self._lock = threading.Lock()
         self._service: ForecastService | None = None
+        self._signature: tuple[str | None, str | None] | None = None
+        self._checked_at = 0.0
+        self.refresh_seconds = refresh_seconds
+
+    @staticmethod
+    def _inputs_signature(settings: Settings) -> tuple[str | None, str | None]:
+        return latest_model_version(settings.models_uri), fingerprint(settings.features_uri)
 
     def get(self, settings: Settings) -> ForecastService:
         with self._lock:
+            now = time.monotonic()
+            if self._service is not None and now - self._checked_at >= self.refresh_seconds:
+                self._checked_at = now
+                if self._inputs_signature(settings) != self._signature:
+                    log.info("inputs changed; reloading forecast service")
+                    self._service = None
             if self._service is None:
+                signature = self._inputs_signature(settings)
                 self._service = ForecastService.load(settings)
+                self._signature, self._checked_at = signature, now
             return self._service
 
     def invalidate(self) -> None:
@@ -82,24 +104,53 @@ def get_service(settings: SettingsDep) -> ForecastService:
 ServiceDep = Annotated[ForecastService, Depends(get_service)]
 
 
+def _verify_google_token(token: str, audience: str) -> dict[str, object]:
+    """Check a Google-signed ID token's signature, expiry and audience; return claims."""
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    return id_token.verify_oauth2_token(token, google_requests.Request(), audience)
+
+
+def _oidc_caller_allowed(token: str, settings: Settings) -> bool:
+    try:
+        claims = _verify_google_token(token, settings.jobs_oidc_audience)
+    except ValueError:
+        return False
+    return (
+        claims.get("email") == settings.jobs_oidc_service_account
+        and claims.get("email_verified") is True
+    )
+
+
 def require_job_token(
     settings: SettingsDep, authorization: Annotated[str | None, Header()] = None
 ) -> None:
-    expected = settings.jobs_token.get_secret_value()
-    if not expected:
+    """Allow a job call with the shared bearer token or a Cloud Scheduler OIDC token."""
+    shared = settings.jobs_token.get_secret_value()
+    oidc = bool(settings.jobs_oidc_audience and settings.jobs_oidc_service_account)
+    if not shared and not oidc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "job endpoints are disabled")
     scheme, _, supplied = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "invalid or missing bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if scheme.lower() == "bearer" and supplied:
+        if shared and hmac.compare_digest(supplied, shared):
+            return
+        if oidc and _oidc_caller_allowed(supplied, settings):
+            return
+    raise HTTPException(
+        status.HTTP_401_UNAUTHORIZED,
+        "invalid or missing bearer token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 # --- Public, read-only ----------------------------------------------------------
 
 
+# Cloud Run's front end reserves some paths ending in "z" (e.g. /healthz returns
+# Google's own 404 from outside), so /health is the public liveness URL. /healthz
+# stays for container probes and local use, where it is reachable.
+@app.get("/health")
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}

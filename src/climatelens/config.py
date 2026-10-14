@@ -55,15 +55,18 @@ class Settings(BaseSettings):
     gcp_region: str = "europe-west3"
     data_bucket: str = ""
     models_bucket: str = ""
-    bigquery_dataset: str = "climatelens"
 
     #: Local filesystem root used for raw Parquet when no GCS bucket is set.
     data_dir: Path = Path("./data")
     #: Local filesystem root used for model artefacts when no GCS bucket is set.
     model_dir: Path = Path("./models")
 
-    #: Bearer token for the ``/jobs/*`` endpoints. Empty disables them entirely.
+    #: Shared bearer token for ``/jobs/*`` (local use). Empty disables this method.
     jobs_token: SecretStr = SecretStr("")
+    #: Google-signed OIDC tokens for ``/jobs/*`` (Cloud Scheduler): the expected
+    #: audience and the only service account allowed to call. Both must be set.
+    jobs_oidc_audience: str = ""
+    jobs_oidc_service_account: str = ""
 
     @property
     def raw_uri(self) -> str:

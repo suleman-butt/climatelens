@@ -7,7 +7,6 @@ manually against live DWD; these tests use synthetic frames only.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from climatelens.data import (
     REQUIRED_PARAMETERS,
@@ -110,11 +109,6 @@ def test_read_raw_date_filter(tmp_path):
     subset = read_raw(base, start=dt.date(2024, 1, 2), end=dt.date(2024, 1, 2))
     assert len(subset) == 1
     assert subset.iloc[0]["date"] == pd.Timestamp("2024-01-02")
-
-
-def test_gcs_uri_not_supported_yet():
-    with pytest.raises(NotImplementedError):
-        write_raw_partitions(to_wide(_synthetic_long()), "gs://bucket/raw")
 
 
 def test_date_range_helpers_are_ordered():

@@ -7,13 +7,14 @@ returns a JSON-serialisable summary dict.
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from climatelens import __version__
 from climatelens.config import Settings, get_logger
 from climatelens.data import (
     default_incremental_range,
     ingest_range,
+    latest_raw_date,
     read_features,
     read_raw,
     write_features,
@@ -35,8 +36,21 @@ def run_ingest(settings: Settings, start: datetime, end: datetime) -> dict[str, 
     return {"event": "ingest_result", **result.__dict__}
 
 
+#: The daily run never re-fetches more than this, even after a long outage.
+MAX_CATCH_UP_DAYS = 60
+
+
 def run_incremental_ingest(settings: Settings, days_back: int = 2) -> dict[str, object]:
+    """Fetch the recent window, reaching back to the last stored day if needed.
+
+    A missed daily run (DWD or deploy outage) is filled in by the next one
+    instead of leaving a permanent gap, up to :data:`MAX_CATCH_UP_DAYS`.
+    """
     start, end = default_incremental_range(days_back=days_back)
+    last = latest_raw_date(settings.raw_uri)
+    if last is not None:
+        resume = datetime(last.year, last.month, last.day, tzinfo=UTC) + timedelta(days=1)
+        start = max(min(start, resume), end - timedelta(days=MAX_CATCH_UP_DAYS))
     return run_ingest(settings, start, end)
 
 

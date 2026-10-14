@@ -73,8 +73,9 @@ def empty_client(tmp_path):
     service_cache.invalidate()
 
 
-def test_healthz_is_live_without_models(empty_client) -> None:
-    response = empty_client.get("/healthz")
+@pytest.mark.parametrize("path", ["/health", "/healthz"])
+def test_health_is_live_without_models(empty_client, path) -> None:
+    response = empty_client.get(path)
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
@@ -313,3 +314,73 @@ def test_about_summarises_data_and_model(bundle_dirs):
     assert about["records"] == 1000 and about["cities"] == 2
     assert about["start"] == "2022-01-01"
     assert about["years"] > 1
+
+
+# --- Cloud Scheduler OIDC auth -------------------------------------------------
+
+SCHEDULER = "climatelens-scheduler@climatelens-iu.iam.gserviceaccount.com"
+
+
+@pytest.fixture
+def oidc_client(bundle_dirs, monkeypatch):
+    settings = Settings(
+        data_dir=bundle_dirs / "data",
+        model_dir=bundle_dirs / "models",
+        jobs_oidc_audience="climatelens-jobs",
+        jobs_oidc_service_account=SCHEDULER,
+    )
+    tokens = {
+        "good": {"email": SCHEDULER, "email_verified": True},
+        "other-sa": {"email": "attacker@example.iam.gserviceaccount.com", "email_verified": True},
+        "unverified": {"email": SCHEDULER, "email_verified": False},
+    }
+
+    def fake_verify(token, audience):
+        assert audience == "climatelens-jobs"
+        if token not in tokens:
+            raise ValueError("bad signature")
+        return tokens[token]
+
+    monkeypatch.setattr(api, "_verify_google_token", fake_verify)
+    monkeypatch.setattr(api, "run_train", lambda s: {"event": "train_result"})
+    yield _client(settings)
+    app.dependency_overrides.clear()
+    service_cache.invalidate()
+
+
+def test_scheduler_oidc_token_is_accepted(oidc_client):
+    response = oidc_client.post("/jobs/train", headers={"Authorization": "Bearer good"})
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("token", ["other-sa", "unverified", "forged"])
+def test_other_oidc_tokens_are_rejected(oidc_client, token):
+    response = oidc_client.post("/jobs/train", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_shared_token_does_not_unlock_oidc_only_config(oidc_client):
+    response = oidc_client.post("/jobs/train", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert response.status_code == 401
+
+
+# --- Cache refresh across instances --------------------------------------------
+
+
+def test_cache_reloads_when_a_new_bundle_is_published(bundle_dirs, monkeypatch):
+    settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
+    cache = api.ServiceCache(refresh_seconds=0)
+    first = cache.get(settings)
+    assert cache.get(settings) is first  # nothing changed: same object
+
+    monkeypatch.setattr(api, "latest_model_version", lambda uri: "20990101T000000Z")
+    monkeypatch.setattr(api.ForecastService, "load", classmethod(lambda cls, s: "reloaded"))
+    assert cache.get(settings) == "reloaded"
+
+
+def test_cache_skips_checks_within_refresh_window(bundle_dirs, monkeypatch):
+    settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
+    cache = api.ServiceCache(refresh_seconds=3600)
+    first = cache.get(settings)
+    monkeypatch.setattr(api, "latest_model_version", lambda uri: pytest.fail("checked too soon"))
+    assert cache.get(settings) is first
