@@ -309,3 +309,41 @@ Phase 5 complete (container verification carried over to Phase 6).
   IU International University". The programme is now named once (footer
   only); the "How ClimateLens works" intro states the purpose without
   repeating it.
+
+### Phase 6 - Container and local end-to-end
+
+- **Dependency lock.** `requirements.lock` (runtime, 87 packages) and
+  `requirements-dev.lock` (+ dev tools, 95) generated with
+  `uv pip compile --universal --generate-hashes`; every transitive dependency
+  pinned and hash-checked. The Docker image and CI install with
+  `pip install --require-hashes`; `make lock` regenerates. The previously
+  floating numpy resolves to 2.5.4. The developer's global Python differed from
+  the lock in ~39 packages (all patch-level) - the drift the lock removes.
+- **Dockerfile hardened.** Builder installs the lock into `/opt/venv` in its
+  own cached layer, then the package with `--no-deps`; runtime stage copies the
+  venv only, adds `libgomp1`, runs as uid 10001 with writable `/app/data` and
+  `/app/models`, and starts uvicorn on `$PORT` (Cloud Run). `.dockerignore`
+  now also excludes `data/`, `models/`, `.claude/`, `.env.*` and the dev lock.
+- **CI `container` stage.** Docker-in-Docker job builds the `api` image on
+  every push, checks it runs as uid 10001, imports LightGBM and the app, serves
+  `/healthz` on `$PORT`, and returns 503 for `/forecast` and `/` while no model
+  is published.
+- **Makefile.** `install` uses the dev lock; new `lock`, `pipeline`, `serve`,
+  `run`, `container-pipeline`. `deploy`/`destroy` point to Phase 7.
+- **End to end from scratch on locked versions** (isolated `.venv` from
+  `requirements-dev.lock`, empty data and model folders): `ingest
+  --backfill-years 3` 38 s (13,164 rows, 1,097 partitions) -> `features` 18 s
+  -> `train` 1 min 41 s (bundle 20261014T164535Z) -> API served 12 fresh
+  forecasts (valid 2026-10-14, not stale), `/metrics` and the dashboard.
+  Scores in line with Phase 4: frost Brier 0.0593 (+51% vs climatology), solar
+  MAE 0.864 (+11.5% vs persistence), wind MAE 0.828 (+9.9%). Lint and all 62
+  tests also pass on the locked versions.
+- **Reproducibility verified.** Retraining on the same feature table produced
+  bit-identical predictions for all three targets (max |diff| = 0.0 on 2,000
+  rows), confirming the deterministic LightGBM settings.
+- **Local Docker still failing.** Docker Desktop's WSL VM crashes and restarts
+  mid-build (`wsl-bootstrap failed, restarting`; BuildKit then reports missing
+  overlayfs snapshots) on every attempt, including with the new Dockerfile.
+  Host: 15.7 GB RAM, WSL 3.0.3, default 8 GB WSL limit, no `.wslconfig`. This
+  is a local Docker Desktop/WSL fault, not the image; the CI `container` job is
+  the verification of record for the image.

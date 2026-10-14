@@ -8,7 +8,7 @@ ClimateLens is a cloud-native weather forecasting service for selected German ci
 
 This project is being developed as an MSc DevOps & Cloud Computing university deliverable. The main focus is a reproducible cloud architecture, automated delivery, and responsible use of machine-learning forecasts.
 
-> **Project status:** The local workflow is complete: ingestion, features, walk-forward evaluation, training, API and dashboard all run locally. Cloud deployment (Terraform, GitLab CI/CD deploy) is next.
+> **Project status:** The local workflow is complete: ingestion, features, walk-forward evaluation, training, API and dashboard run end to end on locked dependencies, and CI builds and smoke-tests the production image. Cloud deployment (Terraform, GitLab CI/CD deploy) is next.
 
 ## Planned Features
 
@@ -90,27 +90,43 @@ The project keeps feature engineering, modelling, and evaluation independent of 
 ## Local Development
 
 ```bash
-make install    # editable install with dev tools
+make install    # exact, hash-checked dependencies from requirements-dev.lock
 make lint       # ruff check + format check
 make test       # pytest (offline, synthetic data)
-make build      # API container image
+make serve      # dashboard on http://localhost:8000 with auto-reload
 ```
+
+Every dependency, including transitive ones, is pinned with hashes in
+`requirements.lock` (runtime image) and `requirements-dev.lock` (CI and
+development). After editing `pyproject.toml`, regenerate both with `make lock`
+(needs [uv](https://docs.astral.sh/uv/)).
 
 Configuration comes from `CLIMATELENS_*` environment variables (or a local
 `.env`); `.env.example` lists them. Secrets are never committed.
 
-The local pipeline, end to end:
+The pipeline, end to end:
 
 ```bash
 climatelens ingest --backfill-years 3   # DWD observations -> data/raw/
 climatelens features                    # -> data/features/features.parquet
 climatelens evaluate                    # walk-forward models vs baselines (report only)
 climatelens train                       # evaluate, refit, write models/<version>/
-uvicorn climatelens.api:app --port 8000 # dashboard on http://localhost:8000
 ```
 
-Afterwards, `climatelens ingest` (no arguments) fetches the last two days and
-`climatelens features` refreshes the forecast inputs.
+Afterwards, `make pipeline` fetches the latest days, rebuilds features and
+retrains.
+
+### Container
+
+```bash
+make build                # production image (non-root, hash-checked deps)
+make container-pipeline   # ingest -> features -> train inside the container
+make run                  # dashboard from the container on http://localhost:8080
+```
+
+`data/` and `models/` are mounted into the container, so the image itself
+stays stateless. The CI `container` job builds the same image on every push
+and checks that it starts, serves `/healthz` and runs as the non-root user.
 
 ## API
 
