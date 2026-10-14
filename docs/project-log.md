@@ -422,3 +422,22 @@ Phase 6 complete.
   (reserved path); fixed with `/health`.
 
 Phase 7 complete (deployments are manual until Phase 8 wires GitLab CI).
+
+### Release 1.0.0 and pre-Phase-8 improvements
+
+- **Versioning:** version 1.0.0 from `climatelens.__version__`; git tag
+  `v1.0.0`; image `v1.0.0` (digest `sha256:aae0b1a1...`) with OCI version
+  label; Artifact Registry tag immutability enabled via Terraform (1 in-place
+  change) and verified by a rejected re-push. Deployed as revision
+  `climatelens-00004-hbd`; footer shows "App v1.0.0".
+- **Image size:** venv 962 -> 792 MB, compressed ~323 -> ~278 MB (see
+  decisions). `google-cloud-bigquery`, `grpcio`, `grpcio-status` and
+  `packaging` left the runtime lock (87 -> 83 packages). The 1.49 GB vs 325 MB
+  difference was compressed vs (compressed + unpacked) reporting.
+- **Dashboard layout:** with three cities the sidebar now stretches to the
+  panels' height (both columns end at the same pixel, measured 748/748 at
+  1380 px) and shows an "Updated daily..." note at its foot; cards are more
+  compact (3-city height ~720 -> ~620 px). With one city the sidebar is
+  naturally taller than the panel. Mobile unchanged (note hidden, no
+  horizontal scroll).
+- 79 tests green.

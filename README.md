@@ -125,7 +125,21 @@ make run                  # dashboard from the container on http://localhost:808
 ```
 
 `data/` and `models/` are mounted into the container, so the image itself
-stays stateless. The CI `container` job builds the same image on every push
+stays stateless.
+
+### Releases
+
+The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.0.0). A
+release is a git tag `vX.Y.Z` plus an image with the same tag in Artifact
+Registry, where tags are immutable:
+
+```bash
+make version         # 1.0.0
+make release-image   # build + push europe-west3-docker.pkg.dev/.../climatelens:v1.0.0
+```
+
+Bump `__version__` before the next release; pushing an existing tag again is
+rejected. The CI `container` job builds the same image on every push
 and checks that it starts, serves `/healthz` and runs as the non-root user.
 
 ## API

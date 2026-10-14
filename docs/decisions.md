@@ -280,3 +280,33 @@ to `.pipeline-triggers`.
   paths ending in `z`; `/healthz` returns Google's own 404 from outside (the
   startup probe still reaches it inside). `/health` was added; `/healthz` stays
   for container probes and local use.
+
+## 2026-10-14: Semantic versions, immutable image tags
+
+- `climatelens.__version__` is the single source of the version; `pyproject.toml`
+  reads it (`dynamic = ["version"]`), the image carries it as the OCI label
+  `org.opencontainers.image.version`, and the dashboard footer shows it.
+- A release is a git tag `vX.Y.Z` on the commit, and the image built from that
+  commit is pushed as `vX.Y.Z`. 1.0.0 is the first release running on Google
+  Cloud.
+- Artifact Registry has **immutable tags**: once `v1.0.0` exists it cannot be
+  moved to another image (verified - a re-push is rejected), so a version
+  always identifies exactly one image. Deployments still pin the digest.
+- Phase 8 moves building, pushing and deploying into GitLab CI on version tags.
+
+## 2026-10-14: Smaller runtime image
+
+The uncompressed venv was 962 MB (compressed image ~323 MB). Removed: test
+suites bundled inside installed packages (~136 MB, e.g. `pandas/tests`), `pip`
+from the runtime venv (13 MB), and the unused `google-cloud-bigquery` with its
+gRPC stack. Result: venv 792 MB (-18%), compressed image ~278 MB (-14%),
+verified by a live DWD ingest, feature build, model load and every endpoint
+inside the slim image. Kept deliberately: precompiled `.pyc` files (~179 MB) -
+the non-root container cannot write them, so dropping them would slow every
+Cloud Run cold start. The large remaining packages (polars runtime for
+`wetterdienst`, pyarrow, scipy, pandas, scikit-learn) are needed at runtime.
+
+Note on sizes: Artifact Registry and `docker push` report the compressed size;
+Docker Desktop's containerd image store reports compressed + unpacked size
+together, which is why the same image showed 1.49 GB locally and 325 MB in the
+registry.
