@@ -347,3 +347,27 @@ Phase 5 complete (container verification carried over to Phase 6).
   Host: 15.7 GB RAM, WSL 3.0.3, default 8 GB WSL limit, no `.wslconfig`. This
   is a local Docker Desktop/WSL fault, not the image; the CI `container` job is
   the verification of record for the image.
+- **Local container verified (Docker Desktop 29.8.2).** The first build
+  completed every step, then the WSL VM crashed while unpacking the image
+  (`wsl.exe` exit `0xc00000fd`, a Windows stack overflow in WSL itself); the
+  retry finished from cache in 15 s. Image `climatelens:local`: 1.49 GB.
+  Smoke checks as in CI: uid 10001, LightGBM 4.5.0 / numpy 2.5.4 from the lock,
+  `/healthz` ok, `/forecast` and `/` 503 without a model. Pipeline inside the
+  container against the mounted `data/` and `models/`: `ingest` (2026-10-11 ->
+  10-13, 36 rows, no gaps), `features` (13,620 rows), `train` -> bundle
+  20261014T171753Z (frost Brier 0.0567, solar MAE 0.843, wind MAE 0.830, all
+  LightGBM). The container then served the dashboard, `/forecast` (valid
+  2026-10-14, not stale) and `/metrics` from that bundle; `/jobs/train` 403
+  without a token. Docker Desktop's WSL VM remains unstable on this machine
+  under heavy writes, but the image itself is verified.
+- Minor follow-up: pandas `FutureWarning` in `data.py` (concatenating empty or
+  all-NA frames) during ingest; harmless now, to be cleaned up.
+- **CI verified.** Pipeline #2947557528 for cc4d4a8 passed all three stages -
+  `lint`, `test` (installing from `requirements-dev.lock` with
+  `--require-hashes` on Linux) and the new `container` job (Docker-in-Docker
+  build + smoke test) - in 4 min 21 s after 174 s in the queue. GitLab created
+  pipelines with a long delay during its 14 Oct 15:00-19:00 UTC rate-limit
+  preview; the older 17f4154 pipeline was auto-cancelled as redundant
+  (`interruptible: true`), as intended.
+
+Phase 6 complete.
