@@ -18,7 +18,7 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 - REST API and server-rendered dashboard
 - Versioned raw data, features, models, and evaluation metrics
 - Infrastructure managed with Terraform
-- Automated application delivery through GitHub Actions and Google Cloud Workload Identity Federation
+- Automated application delivery through GitLab CI/CD and Google Cloud Workload Identity Federation
 
 ## Forecast Targets
 
@@ -69,7 +69,7 @@ The initial implementation will use a single Cloud Run service with protected in
 - **Compute:** Google Cloud Run
 - **Scheduling:** Google Cloud Scheduler
 - **Infrastructure:** Terraform
-- **CI/CD:** GitHub Actions with Workload Identity Federation
+- **CI/CD:** GitLab CI/CD with Workload Identity Federation (GitLab OIDC)
 - **DNS:** Cloudflare for `sulemanb.com`
 
 ## Repository Structure
@@ -81,7 +81,7 @@ climatelens/
 ├── infra/                 Terraform and GCP bootstrap files
 ├── docs/                  Architecture decisions and project evidence
 ├── notebooks/             Data exploration
-└── .github/workflows/     CI and deployment workflows
+└── .gitlab-ci.yml         CI and deployment pipeline
 ```
 
 The project keeps feature engineering, modelling, and evaluation independent of GCP. Cloud I/O is isolated in the data and job layers so the core workflow remains testable locally.
@@ -132,7 +132,7 @@ Cloudflare will remain the authoritative DNS provider, while Cloud Run will serv
 Deployment principles:
 
 - No service-account JSON keys
-- GitHub Actions authentication through Workload Identity Federation
+- GitLab CI/CD authentication through Workload Identity Federation (GitLab OIDC tokens)
 - Terraform-managed runtime infrastructure
 - Automatic application deployment from `main`
 - Approval required for production infrastructure changes

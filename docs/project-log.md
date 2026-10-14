@@ -87,3 +87,17 @@ or a synthetic proxy. Feature inputs are restricted to near-complete fields
 those rows are excluded from the solar model's walk-forward split rather than
 imputed. See docs/decisions.md. README and dashboard drop from four cards to
 three.
+
+## 2026-10-14
+
+### GitLab migration
+
+- Moved the canonical repository to GitLab
+  (`git@gitlab.com:sulemanb/devops-cloud/climatelens.git`) as `origin`; the old
+  GitHub remote was removed locally. A GitLab push mirror keeps
+  `github.com/suleman-butt/climatelens` in sync automatically.
+- Added `.gitlab-ci.yml` with `lint` (ruff check + format check) and `test`
+  (pytest with coverage, JUnit and Cobertura reports) stages. Runs on every
+  branch push and merge request, without duplicate branch + MR pipelines.
+- Updated README and docs/decisions.md: GitHub Actions -> GitLab CI/CD,
+  Workload Identity Federation via GitLab OIDC.

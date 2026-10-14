@@ -85,4 +85,24 @@ was rewritten for the 0.136 API.
 
 ## 2026-09-06: No service-account keys
 
-GitHub Actions will authenticate to Google Cloud using Workload Identity Federation. Long-lived service-account JSON keys are excluded to reduce credential-leakage risk.
+CI/CD will authenticate to Google Cloud using Workload Identity Federation. Long-lived service-account JSON keys are excluded to reduce credential-leakage risk.
+
+*Updated 2026-10-14:* the CI/CD platform is now GitLab (see below). Pipeline jobs
+request a GitLab OIDC token (`id_tokens`), which a GCP Workload Identity pool
+provider trusts for `gitlab.com`, restricted to this project path and to
+protected refs for deployment.
+
+## 2026-10-14: GitLab as primary repository and CI/CD platform
+
+The canonical repository is `gitlab.com/sulemanb/devops-cloud/climatelens`. All
+pushes, merge requests and pipelines run on GitLab; the GitHub repository
+(`github.com/suleman-butt/climatelens`) is kept as a read-only push mirror fed by
+GitLab, so it is never pushed to directly.
+
+Consequences:
+
+- CI/CD is defined in `.gitlab-ci.yml` instead of GitHub Actions workflows.
+- Workload Identity Federation uses GitLab's OIDC issuer (`https://gitlab.com`)
+  instead of GitHub's; the no-JSON-keys principle is unchanged.
+- Production infrastructure approval moves to GitLab protected environments with
+  a manual `terraform apply` job.
