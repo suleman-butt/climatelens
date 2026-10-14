@@ -32,3 +32,6 @@ models/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Internal project docs (not pushed)
+docs/internal/
