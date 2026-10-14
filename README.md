@@ -7,7 +7,7 @@ ClimateLens is a cloud-native weather forecasting service for selected German ci
 
 This project is being developed as an MSc DevOps & Cloud Computing university deliverable. The main focus is a reproducible cloud architecture, automated delivery, and responsible use of machine-learning forecasts.
 
-> **Project status:** Early development. The local data, feature, model, API, and dashboard workflow will be validated before cloud deployment.
+> **Project status:** The local workflow is complete: ingestion, features, walk-forward evaluation, training, API and dashboard all run locally. Cloud deployment (Terraform, GitLab CI/CD deploy) is next.
 
 ## Planned Features
 
@@ -88,24 +88,45 @@ The project keeps feature engineering, modelling, and evaluation independent of 
 
 ## Local Development
 
-The project will provide Makefile commands for the main development tasks:
-
 ```bash
-make install
-make lint
-make test
-make build
+make install    # editable install with dev tools
+make lint       # ruff check + format check
+make test       # pytest (offline, synthetic data)
+make build      # API container image
 ```
 
-Configuration will be supplied through environment variables. Secrets must never be committed to the repository; `.env.example` will document the required variable names without containing credentials.
+Configuration comes from `CLIMATELENS_*` environment variables (or a local
+`.env`); `.env.example` lists them. Secrets are never committed.
 
-The intended development sequence is:
+The local pipeline, end to end:
 
-1. Validate a representative DWD data sample locally.
-2. Run ingestion, feature engineering, training, and evaluation locally.
-3. Start the API and verify the dashboard and forecast endpoints.
-4. Build and test the container locally.
-5. Deploy the validated application to Google Cloud.
+```bash
+climatelens ingest --backfill-years 3   # DWD observations -> data/raw/
+climatelens features                    # -> data/features/features.parquet
+climatelens evaluate                    # walk-forward models vs baselines (report only)
+climatelens train                       # evaluate, refit, write models/<version>/
+uvicorn climatelens.api:app --port 8000 # dashboard on http://localhost:8000
+```
+
+Afterwards, `climatelens ingest` (no arguments) fetches the last two days and
+`climatelens features` refreshes the forecast inputs.
+
+## API
+
+| Method | Path | Access | Description |
+|---|---|---|---|
+| GET | `/` | public | Dashboard: frost, solar and wind cards for all cities |
+| GET | `/forecast` | public | Next-day forecasts for every city |
+| GET | `/forecast/{city}` | public | Next-day forecast for one city (slug, e.g. `berlin`) |
+| GET | `/cities` | public | The 12 cities and their DWD stations |
+| GET | `/metrics` | public | Walk-forward scores of the served model vs baselines (`?per_city=true`) |
+| GET | `/healthz` | public | Liveness |
+| POST | `/jobs/ingest` | token | Fetch recent DWD data and rebuild features |
+| POST | `/jobs/train` | token | Evaluate, retrain and publish a new model bundle |
+
+Job endpoints require `Authorization: Bearer $CLIMATELENS_JOBS_TOKEN` and are
+disabled when no token is set. Forecasts older than three days are flagged
+`stale`.
 
 ## Model Evaluation
 

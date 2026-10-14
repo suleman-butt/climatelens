@@ -205,3 +205,46 @@ Per city (LightGBM skill): frost Brier skill +41% (Nuremberg) to +57%
   Desktop was not running).
 
 Phase 4 complete.
+
+### Phase 5 - API and dashboard
+
+- Added `pipeline.py`: ingest / features / evaluate / train steps shared by the
+  CLI and the API job endpoints (`jobs.py` is now a thin CLI over it).
+- Added `predict.py`: `ForecastService` loads the `LATEST` bundle and the latest
+  feature row per city and returns next-day forecasts - frost probability (and
+  `expected` at p >= 0.5), solar kWh/m2, wind speed, v^3 power proxy and power
+  relative to the city's typical day. Forecasts based on observations older
+  than 3 days are flagged `stale`. `metrics_summary` reports the served model
+  vs its reference baseline from the bundle's `metrics.json`.
+- `api.py`: public `/`, `/forecast`, `/forecast/{city}`, `/cities`, `/metrics`,
+  `/healthz`; protected `POST /jobs/ingest` (incremental ingest + feature
+  rebuild) and `POST /jobs/train`. Job endpoints need
+  `Authorization: Bearer $CLIMATELENS_JOBS_TOKEN` (constant-time compare), are
+  disabled (403) when no token is set, run one at a time (409 if busy) and
+  reload the forecast service afterwards. 503 until a bundle and feature table
+  exist.
+- Server-rendered Jinja2 dashboard (`templates/dashboard.html`): three cards
+  (frost, solar, wind) x 12 cities, each with the served model's walk-forward
+  score and skill vs its baseline; stale-data banner; responsible-use
+  disclaimer; light/dark; single column below 960 px. Checked in the browser on
+  desktop and at 375 px (no horizontal scroll).
+- New dependency `jinja2==3.1.6`; templates packaged via
+  `[tool.setuptools.package-data]`. `CLIMATELENS_JOBS_TOKEN` added to
+  `.env.example`.
+- `tests/test_api.py`: 15 tests against a real bundle trained on synthetic data
+  (forecast shape and ordering, stale flag, 404s, metrics, dashboard render,
+  503 without a bundle, job auth: disabled / bad scheme / wrong token / busy /
+  missing input, cache reload after a job). `ruff` + `pytest` green (52 tests).
+- Data refreshed for a live forecast: `ingest --start 2026-09-06 --end
+  2026-10-14` wrote 456 rows (12 cities x 38 days, latest DWD day 2026-10-13);
+  features rebuilt (13,620 rows). The dashboard now shows forecasts valid
+  2026-10-14 from model bundle 20261014T154455Z. The new partitions carry no
+  `radiation_global` column at all (DWD solar lag) - harmless, since radiation
+  is a target only.
+- **Container still unverified.** Docker Desktop's engine crashed during every
+  build attempt on this machine (latest: while copying site-packages into the
+  `api` stage). The Dockerfile itself built correctly up to each crash; the
+  GitLab test job installs `libgomp1` on the same Debian base and trains
+  LightGBM, covering the runtime dependency.
+
+Phase 5 complete (container verification carried over to Phase 6).

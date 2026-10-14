@@ -154,3 +154,28 @@ Consequences:
 - **Immutable, versioned bundles** with a `LATEST` pointer written last, so a
   reader never sees a half-written bundle and any served forecast traces back
   to its training data, parameters and evaluation.
+
+## 2026-10-14: API job endpoints authenticated in the application
+
+The dashboard and forecast API must be public, while `/jobs/*` must not be.
+Cloud Run IAM applies to a whole service, so with one service (see "Simplified
+initial compute") the job endpoints authenticate in the application:
+
+- Locally and as a first layer, a bearer token (`CLIMATELENS_JOBS_TOKEN`,
+  compared in constant time). With no token configured the endpoints are
+  disabled, so a misconfigured deployment fails closed.
+- In the cloud (Phase 7) Cloud Scheduler will call them with a Google-signed
+  OIDC ID token; the check will verify issuer, audience and the scheduler
+  service account instead of a shared secret, with the token kept in Secret
+  Manager only as long as it is still needed.
+
+Jobs run synchronously inside the request (ingest seconds, train ~2-3 min,
+within Cloud Run's request timeout), one at a time, and invalidate the cached
+forecast service so the next request serves the new data or bundle.
+
+## 2026-10-14: Forecasts are served even when data is stale
+
+If DWD data is late, each city's forecast is still issued from its most recent
+observations, with `valid_for`, `data_age_days` and a `stale` flag (> 3 days),
+and the dashboard shows a banner. Hiding forecasts would make a data outage look
+like a service outage; labelling them keeps the page honest and usable.
