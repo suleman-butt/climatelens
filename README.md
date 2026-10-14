@@ -1,9 +1,10 @@
 # ClimateLens
 
-ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into next-day forecasts across two practical perspectives:
+ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into next-day forecasts across three practical perspectives:
 
 - **Agriculture:** frost risk
-- **Energy:** solar and wind potential
+- **Solar energy:** sunshine energy reaching the ground
+- **Outdoors:** how windy the day will be
 
 This project is being developed as an MSc DevOps & Cloud Computing university deliverable. The main focus is a reproducible cloud architecture, automated delivery, and responsible use of machine-learning forecasts.
 
@@ -24,9 +25,9 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 
 | Target | Perspective | Type | Description |
 |---|---|---|---|
-| Frost risk | Agriculture | Classification | Probability that next-day minimum temperature is below 0 C |
-| Solar potential | Energy | Regression | Next-day global radiation (kWh/m2), from DWD SOLAR stations |
-| Wind potential | Energy | Regression | Next-day mean wind speed as a power-potential proxy (proportional to v^3) |
+| Frost | Agriculture | Classification | Probability that next-day minimum temperature is below 0 C |
+| Sunshine | Solar energy | Regression | Next-day global radiation (kWh/m2), from DWD SOLAR stations |
+| Wind | Outdoors | Regression | Next-day mean wind speed (m/s), shown as km/h and a Beaufort description |
 
 A fourth target, next-day pollen load (Health), was scoped out: the DWD
 observation API carries no pollen data, and the only alternative is DWD's

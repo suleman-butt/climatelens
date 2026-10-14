@@ -179,3 +179,37 @@ If DWD data is late, each city's forecast is still issued from its most recent
 observations, with `valid_for`, `data_age_days` and a `stale` flag (> 3 days),
 and the dashboard shows a banner. Hiding forecasts would make a data outage look
 like a service outage; labelling them keeps the page honest and usable.
+
+## 2026-10-14: Wind reframed from energy to outdoor conditions
+
+Solar already covers the energy angle, so presenting wind as a second energy
+target (power proxy v^3) was redundant for dashboard users. Wind is now the
+**Outdoors** perspective: the next-day mean wind speed in km/h with its
+Beaufort description ("Gentle breeze", "Strong breeze", ...). The model and
+target are unchanged (mean wind speed in m/s); only the presentation changed.
+This supersedes the dashboard part of "Feature table design": the v^3 power
+proxy (`wind_power_proxy`) and the `power_*` API fields were removed.
+
+The Beaufort label is chosen from the *rounded km/h value shown on the page*
+(official km/h bands), so two cities showing the same speed never get different
+labels. The scale describes sustained wind; since the forecast is a daily mean,
+gusts will be stronger - acceptable for an everyday "how windy" summary, and
+the disclaimer rules out safety use.
+
+## 2026-10-14: Dashboard written for non-specialists
+
+Each card answers one question in plain words (frost unlikely / possible /
+likely; sunnier than usual / about usual / duller than usual for the month;
+Beaufort wind description) with one supporting number. Model accuracy is stated
+once in the footer in everyday terms, not per card; evaluation detail (folds,
+baselines, skill scores) stays on `/metrics` and in the project log. Users
+compare up to three cities, selected in a sidebar and kept in the URL.
+
+## 2026-10-14: Refresh daily, retrain monthly
+
+The dashboard tells users that forecasts refresh daily and the model is
+retrained monthly. Phase 7 implements this with Cloud Scheduler:
+`POST /jobs/ingest` once a day after DWD publishes, `POST /jobs/train` once a
+month. Monthly matches the walk-forward evaluation, where each fold also adds
+one month of training data; retraining more often would mostly re-learn the
+same patterns at extra cost. Until Phase 7 these steps run by hand.

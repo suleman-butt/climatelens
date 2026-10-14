@@ -248,3 +248,64 @@ Phase 4 complete.
   LightGBM, covering the runtime dependency.
 
 Phase 5 complete (container verification carried over to Phase 6).
+
+### Dashboard redesign (user feedback)
+
+- City picker sidebar: up to 3 cities at once (`/?city=berlin&city=munich`),
+  Berlin by default. Selection lives in the URL (bookmarkable, works without
+  JavaScript via a `noscript` submit button); a small script applies changes
+  instantly, disables further choices at 3 and keeps at least one city. The
+  server also caps at 3, drops duplicates and ignores unknown slugs. Below
+  760 px the sidebar becomes a scrollable chip row with selected cities first.
+- One panel per selected city with three cards - snowflake (frost), sun
+  (solar), wind icons as inline SVG - each showing one large value and a
+  plain-language label: frost risk low / moderate / high (< 20%, 20-50%,
+  >= 50%), solar vs the city's typical value for the month (below / typical /
+  above, +/-15%), wind power vs the city's typical day (low < 0.6x, high
+  > 1.4x).
+- Evaluation jargon removed from the page. Each card carries one accuracy line
+  from the served model's walk-forward results for that city ("Correct on 92%
+  of past days", "Typically within +/-0.8 kWh/m2"); full detail stays on
+  `/metrics`.
+- Disclaimer reworded as an "About these forecasts" note: technical
+  demonstrator for education and research, statistical estimates, not for
+  medical, agricultural or safety-critical decisions, refer to DWD for official
+  forecasts and warnings. The same text is returned in the API `disclaimer`.
+- API additions: `frost.risk`, `solar.vs_typical`; `ForecastService.city_accuracy`.
+- Browser-checked on desktop (dark), 800 px and 375 px (light): no horizontal
+  scroll (fixed a grid min-width overflow from the chip row). 57 tests green.
+- Second pass for non-specialist readers: each card now gives one plain answer
+  and one number - Frost ("Frost unlikely / possible / likely" + chance of
+  < 0 C), Sunshine ("Sunnier than usual / About usual / Duller than usual" +
+  expected kWh/m2 vs the city's usual for the month), Wind ("Gentle breeze"
+  etc. + km/h). Repeated per-card descriptions and per-card accuracy lines
+  removed; accuracy stated once in a "How reliable is this?" footer line.
+  Station names dropped from the city header.
+- Wind perspective changed from Energy to **Outdoors** (solar already covers
+  energy): Beaufort description from the displayed whole km/h, so equal speeds
+  never get different labels. `wind_power_proxy` and the API `power_*` fields
+  removed; API gains `wind.speed_kmh`, `wind.beaufort`, `wind.description`,
+  `solar.typical_kwh_m2`, `solar.outlook`. README perspectives and targets
+  table updated. 58 tests green; checked in the browser at desktop and 375 px.
+- Light / Dark / Auto theme switch in the header. Auto follows the device
+  setting; an explicit choice is saved in the viewer's browser
+  (`localStorage`, wrapped in try/catch so the page still works when storage is
+  blocked) and applied by a small script in `<head>` before the first paint,
+  so there is no flash of the wrong theme. The switch is hidden when
+  JavaScript is off (the page then follows the device setting). Browser-checked:
+  Light on a dark device, Dark on a light device, choice kept across reloads and
+  city changes, Auto clears it; 375 px layout without horizontal scroll.
+  59 tests green.
+- Branding and explanation for non-specialists: logo (lens with a rising sun,
+  inline SVG, also the favicon) beside the name; a fuller subtitle; and a "How
+  ClimateLens works" section in four plain steps (Collect, Learn, Forecast,
+  Stay up to date). It uses live figures from the feature table and bundle
+  manifest (currently 13,620 daily records, 3.1 years since 5 Sep 2023, 18 DWD
+  stations, last trained 14 Oct 2026), names LightGBM and claims it beat the
+  simple rules only while LightGBM is the served model, and credits the
+  MSc DevOps & Cloud Computing project. `ForecastService.about()` added.
+  62 tests green; checked at desktop and 375 px in light and dark.
+- Footer credit: "Created by Suleman Butt · MSc DevOps & Cloud Computing,
+  IU International University". The programme is now named once (footer
+  only); the "How ClimateLens works" intro states the purpose without
+  repeating it.
