@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 STATION_SELECTION_DATE = "2026-09-06"
@@ -60,6 +61,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     #: Local filesystem root used for model artefacts when no GCS bucket is set.
     model_dir: Path = Path("./models")
+
+    #: Bearer token for the ``/jobs/*`` endpoints. Empty disables them entirely.
+    jobs_token: SecretStr = SecretStr("")
 
     @property
     def raw_uri(self) -> str:

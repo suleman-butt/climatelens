@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClimateLens</title>
+  <meta name="description" content="Next-day frost, solar and wind forecasts for 12 German cities from DWD observations.">
+  <style>
+    :root {
+      --bg: #f6f7f9; --surface: #ffffff; --text: #16202b; --muted: #5b6875;
+      --border: #e1e5ea; --track: #eceff3;
+      --frost: #3b82c4; --solar: #d99a16; --wind: #2f9d8f;
+      --warn-bg: #fff4dc; --warn-text: #7a5300; --badge-bg: #e3effa; --badge-text: #1d5c94;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f141a; --surface: #171e26; --text: #e6ebf0; --muted: #98a4b0;
+        --border: #26303b; --track: #222b35;
+        --frost: #6aaee6; --solar: #f0b638; --wind: #4fc3b3;
+        --warn-bg: #3a2d10; --warn-text: #f3d18a; --badge-bg: #1d3247; --badge-text: #a9d0f2;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 40px; }
+    header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; align-items: end; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+    .sub { margin: 2px 0 0; color: var(--muted); }
+    .meta { color: var(--muted); font-size: 13px; text-align: right; }
+    .meta strong { color: var(--text); font-size: 15px; }
+    .banner { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { .meta { text-align: left; } }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 14px; display: flex; flex-direction: column; }
+    .card h2 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .card .what { margin: 2px 0 12px; color: var(--muted); font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 5px 0; vertical-align: middle; font-size: 14px; }
+    td.city { width: 34%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+    td.val { width: 24%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
+    td.barcell { padding-left: 10px; }
+    .bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+    .bar span { display: block; height: 100%; border-radius: 4px; }
+    .badge { font-size: 11px; font-weight: 600; background: var(--badge-bg); color: var(--badge-text); border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+    .unit { color: var(--muted); font-size: 12px; }
+    .skill { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12.5px; }
+    .skill strong { color: var(--text); }
+    footer { margin-top: 26px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; }
+    footer a { color: inherit; }
+    .disclaimer { font-weight: 600; color: var(--text); }
+    .empty { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>ClimateLens</h1>
+      <p class="sub">Next-day frost, solar and wind forecasts for 12 German cities, from DWD station observations.</p>
+    </div>
+    {% if available %}
+    <div class="meta">
+      Forecast for <strong>{{ valid_for }}</strong><br>
+      Model version {{ version }}
+    </div>
+    {% endif %}
+  </header>
+
+  {% if not available %}
+  <div class="empty">
+    <h2>No forecasts yet</h2>
+    <p>{{ reason }}</p>
+    <p class="unit">Run <code>climatelens ingest</code>, <code>climatelens features</code> and <code>climatelens train</code>.</p>
+  </div>
+  {% else %}
+
+  {% if any_stale %}
+  <div class="banner">
+    Observations are more than a few days old, so these forecasts are for a past date.
+    Each city's forecast is based on its latest available DWD observations.
+  </div>
+  {% endif %}
+
+  {% macro skill_line(m, label) -%}
+    {% if m %}
+    <div class="skill">
+      {{ m.served_model }} &middot; {{ m.primary_metric | upper }} <strong>{{ '%.3f' % m.score }}</strong>
+      {% if m.skill is not none %}
+        &middot; <strong>{{ '%+.0f' % (m.skill * 100) }}%</strong> vs {{ m.reference_baseline }} ({{ '%.3f' % m.reference_score }})
+      {% endif %}
+      <br>Walk-forward test {{ m.test_start }} to {{ m.test_end }}, {{ m.folds }} monthly folds, {{ m.test_rows }} {{ label }}.
+    </div>
+    {% endif %}
+  {%- endmacro %}
+
+  <div class="grid">
+    <section class="card">
+      <h2><span class="dot" style="background: var(--frost)"></span>Frost risk</h2>
+      <p class="what">Agriculture &middot; chance that tomorrow's minimum air temperature is below 0 &deg;C</p>
+      <table>
+        {% for f in forecasts %}
+        <tr>
+          <td class="city" title="{{ f.station.name }}">{{ f.name }}</td>
+          <td class="barcell"><div class="bar"><span style="width: {{ (f.frost.probability * 100) | round(1) }}%; background: var(--frost)"></span></div></td>
+          <td class="val">{{ '%.0f' % (f.frost.probability * 100) }}%{% if f.frost.expected %}<span class="badge">frost</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {{ skill_line(metrics.target_frost, "city-days") }}
+    </section>
+
+    <section class="card">
+      <h2><span class="dot" style="background: var(--solar)"></span>Solar potential</h2>
+      <p class="what">Energy &middot; tomorrow's global radiation on a horizontal surface</p>
+      <table>
+        {% for f in forecasts %}
+        {% set v = f.solar.kwh_m2 or 0 %}
+        <tr>
+          <td class="city" title="Radiation station: {{ f.solar_station.name }} ({{ f.solar_station.distance_km }} km)">{{ f.name }}</td>
+          <td class="barcell"><div class="bar"><span style="width: {{ [v / 8.0 * 100, 100] | min | round(1) }}%; background: var(--solar)"></span></div></td>
+          <td class="val">{% if f.solar.kwh_m2 is not none %}{{ '%.2f' % f.solar.kwh_m2 }} <span class="unit">kWh/m&sup2;</span>{% else %}&ndash;{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {{ skill_line(metrics.target_solar_kwh_m2, "city-days") }}
+    </section>
+
+    <section class="card">
+      <h2><span class="dot" style="background: var(--wind)"></span>Wind potential</h2>
+      <p class="what">Energy &middot; tomorrow's mean wind speed; power potential scales with v&sup3; (shown vs the city's typical day)</p>
+      <table>
+        {% for f in forecasts %}
+        {% set ratio = f.wind.power_vs_typical or 0 %}
+        <tr>
+          <td class="city" title="{{ f.station.name }}">{{ f.name }}</td>
+          <td class="barcell"><div class="bar"><span style="width: {{ [ratio / 3.0 * 100, 100] | min | round(1) }}%; background: var(--wind)"></span></div></td>
+          <td class="val">{{ '%.1f' % f.wind.speed_ms }} <span class="unit">m/s</span>{% if f.wind.power_vs_typical is not none %} <span class="unit">&times;{{ '%.1f' % f.wind.power_vs_typical }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {{ skill_line(metrics.target_wind_speed, "city-days") }}
+    </section>
+  </div>
+  {% endif %}
+
+  <footer>
+    <span class="disclaimer">{{ disclaimer }}</span>
+    <span>Data: Deutscher Wetterdienst open data &middot; API: <a href="/forecast">/forecast</a> &middot; <a href="/metrics">/metrics</a> &middot; <a href="/cities">/cities</a> &middot; <a href="/docs">docs</a></span>
+  </footer>
+</div>
+</body>
+</html>
