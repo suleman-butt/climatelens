@@ -31,7 +31,7 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 
 A fourth target, next-day pollen load (Health), was scoped out: the DWD
 observation API carries no pollen data, and the only alternative is DWD's
-separate coarse regional pollen-index archive. See [`docs/decisions.md`](docs/decisions.md).
+separate coarse regional pollen-index archive.
 
 ## Architecture
 
@@ -79,9 +79,8 @@ One Cloud Run service serves the dashboard and API and runs the protected ingest
 climatelens/
 ├── src/climatelens/       Application source code
 ├── tests/                 Automated tests
-├── infra/                 Terraform and GCP bootstrap files
-├── docs/                  Architecture decisions and project evidence
-├── notebooks/             Data exploration
+├── infra/                 Terraform (GCP infrastructure) and its bootstrap
+├── Dockerfile             Production image (non-root, hash-locked dependencies)
 └── .gitlab-ci.yml         CI and deployment pipeline
 ```
 
@@ -218,14 +217,6 @@ EUR 1/month, mostly container image storage.
 ClimateLens is a technical demonstrator for educational and research purposes. Its forecasts are city-level estimates and may be affected by data gaps, station coverage, model limitations, and weather uncertainty.
 
 **Technical demonstrator. Not medical, agricultural, or safety advice.**
-
-## Project Documentation
-
-- [`docs/decisions.md`](docs/decisions.md): Architecture and modelling decisions
-- [`docs/project-log.md`](docs/project-log.md): Build evidence, experiments, issues, and timings
-- [`infra/`](infra/): Infrastructure as code
-
-These files will be added as implementation progresses.
 
 ## License
 

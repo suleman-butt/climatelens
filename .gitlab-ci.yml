@@ -12,7 +12,7 @@ variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 # Files that can change what CI builds or tests. A push that touches none of
-# them - e.g. only README or docs/*.md - starts no pipeline and uses no CI
+# them - e.g. only README.md - starts no pipeline and uses no CI
 # minutes. Manual and scheduled pipelines always run (changes: is true there).
 .pipeline-triggers: &pipeline-triggers
   - "src/**/*"
