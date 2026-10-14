@@ -129,3 +129,28 @@ Consequences:
   feature, because the solar station may be up to 60 km away and lags ~6 weeks.
 - **City identity enters only through station metadata** (lat/lon/elevation),
   not a one-hot city column, so the model shares structure across cities.
+
+## 2026-10-14: Walk-forward evaluation and model selection
+
+- **Monthly expanding folds.** Each fold trains on every row before a month
+  boundary and tests on that month; the first test month starts after >= 365
+  days of history so climatology has seen every season. Monthly refits match a
+  realistic retraining cadence and give 24 folds over two years.
+- **No gap between train and test.** Train row `t` carries the observation of
+  day `t + 1`; at forecast time on day `t + 1` that observation is already
+  known, so it is not leakage. A spy test enforces train-before-test per fold.
+- **Primary metrics:** Brier score for frost (accuracy is reported but
+  flattered by class imbalance) and MAE for solar and wind. Skill is reported
+  against the strongest relevant reference: climatology for frost probability,
+  persistence for the regressions.
+- **The served model per target is the walk-forward winner**, refit on all rows
+  with a known target. If a baseline ever beats LightGBM, the baseline is
+  served - the bundle manifest records which model was chosen and why.
+- **Fixed LightGBM hyperparameters, no tuning.** With ~2 years of test data,
+  tuning on the walk-forward folds would overfit the evaluation itself. Small,
+  regularised trees (15 leaves, 400 rounds, lr 0.03, subsampling) with
+  `deterministic=True` and a single thread, so a retrain on the same data
+  reproduces the same model.
+- **Immutable, versioned bundles** with a `LATEST` pointer written last, so a
+  reader never sees a half-written bundle and any served forecast traces back
+  to its training data, parameters and evaluation.

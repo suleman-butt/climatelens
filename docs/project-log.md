@@ -144,3 +144,64 @@ rows (12 cities), 42 features; worst feature null rate 2.0%
   solar are unaffected. Noted as a data limitation for per-city wind results.
 
 Phase 3 complete.
+
+### Phase 4 - Modelling and evaluation
+
+- Added `models.py` (pure): baselines `Persistence` (tomorrow = today,
+  climatology fallback when today is missing), `Climatology` (per-city
+  day-of-year mean, +/- 7-day circular window, Feb 29 folded onto Feb 28),
+  `MajorityClass` (frost only), and `LightGBMModel` on the 42 features (fixed,
+  deterministic parameters; NaNs handled natively; frost returns a probability,
+  regression outputs clipped at 0).
+- Added `evaluate.py` (pure): expanding walk-forward with monthly test folds,
+  first fold after >= 365 days of history; MAE/RMSE (solar, wind),
+  accuracy/Brier (frost); skill scores vs persistence (MAE) and climatology
+  (Brier); per-target and per-city summaries; `train_final` refits the
+  walk-forward winner per target on all rows with a known target.
+- Model bundles: `models/<UTC version>/{target}.joblib` + `manifest.json`
+  (training range, rows, params, top features, library versions, CI commit) +
+  `metrics.json` (full walk-forward results); `models/LATEST` points at the
+  bundle to serve. Bundles are immutable.
+- New CLI commands: `climatelens evaluate [--per-city]` (report only) and
+  `climatelens train` (evaluate -> refit -> write bundle). A full train takes
+  ~2 min 15 s locally (single-threaded for determinism).
+- `libgomp1` (OpenMP runtime for LightGBM) added to the CI image and the API
+  container stage.
+- Added `tests/test_models.py`: 15 offline tests (baseline behaviour, leap-year
+  and year-wrap climatology, metric formulas, monthly expanding folds, a spy
+  model proving every fold trains strictly before its test month, LightGBM
+  beating climatology on a synthetic signal, bundle round trip and
+  immutability). `ruff` + `pytest` green (37 tests).
+
+**Walk-forward results (bundle 20261014T154455Z).** Test period 2024-10-01 ->
+2026-09-04 (solar -> 2026-07-30), 24 monthly folds (solar 22). The trained
+bundle uses LightGBM for all three targets - it won every target overall and in
+every city.
+
+| Target | Metric | Persistence | Climatology | Majority | LightGBM | LightGBM skill |
+|---|---|---|---|---|---|---|
+| Frost (8,448 rows) | Brier | 0.0959 | 0.1212 | 0.1861 | **0.0596** | +50.8% vs climatology |
+| Frost | Accuracy | 0.904 | 0.834 | 0.814 | **0.917** | |
+| Solar (7,716 rows) | MAE kWh/m2 | 0.942 | 1.051 | - | **0.843** | +10.5% vs persistence |
+| Solar | RMSE kWh/m2 | 1.380 | 1.379 | - | **1.125** | |
+| Wind (8,263 rows) | MAE m/s | 0.923 | 1.002 | - | **0.835** | +9.4% vs persistence |
+| Wind | RMSE m/s | 1.224 | 1.300 | - | **1.083** | |
+
+Per city (LightGBM skill): frost Brier skill +41% (Nuremberg) to +57%
+(Munich); solar MAE skill +6.2% (Cologne) to +13.3% (Hannover); wind MAE skill
++1.8% (Frankfurt) to +13.1% (Hamburg).
+
+- Persistence is the strongest baseline for every target - weather is
+  autocorrelated day to day - and beats climatology even for frost (Brier
+  0.0959 vs 0.1212).
+- Frost majority-class accuracy is 81.4% (test-period frost rate 18.6%), so
+  accuracy alone flatters weak models; Brier is the primary frost metric.
+- Frankfurt's wind gain is marginal (+1.8%): Offenbach-Wetterpark is a sheltered
+  low-wind site (MAE ~0.58 m/s), leaving little for features to add.
+- Top features: frost - same-day min/mean temperature and ground minimum;
+  solar - day-of-year, max temperature, precipitation, cloud cover; wind -
+  same-day wind speed and its 3/7-day means.
+- Not verified this session: the container build with `libgomp1` (Docker
+  Desktop was not running).
+
+Phase 4 complete.
