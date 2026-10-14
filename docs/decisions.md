@@ -233,3 +233,16 @@ The production image is built and smoke-tested by a Docker-in-Docker CI job on
 every push rather than only on a developer machine: it must run as the non-root
 user, load LightGBM, serve `/healthz` on `$PORT` and fail closed (503) without a
 model. Registry push and deployment build on this job in Phase 8.
+
+## 2026-10-14: No CI pipeline for documentation-only pushes
+
+The project runs on GitLab's free tier (about 400 CI minutes), and one full
+pipeline (lint, test, Docker-in-Docker container build) costs several of them.
+`workflow:rules` therefore starts a push or merge-request pipeline only when a
+file that can change the build or tests changed: `src/`, `tests/`, `infra/`,
+`pyproject.toml`, the lock files, `Dockerfile`, `.dockerignore`, `Makefile` or
+`.gitlab-ci.yml`. Pushes that touch only Markdown (README, `docs/`) start no
+pipeline. Manual, scheduled and API pipelines always run. GitLab's `changes:`
+can only express "run if any of these changed", so the rule lists what triggers
+a pipeline rather than what to skip; new top-level code folders must be added
+to `.pipeline-triggers`.

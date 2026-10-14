@@ -11,12 +11,30 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
+# Files that can change what CI builds or tests. A push that touches none of
+# them - e.g. only README or docs/*.md - starts no pipeline and uses no CI
+# minutes. Manual and scheduled pipelines always run (changes: is true there).
+.pipeline-triggers: &pipeline-triggers
+  - "src/**/*"
+  - "tests/**/*"
+  - "infra/**/*"
+  - "pyproject.toml"
+  - "requirements*.lock"
+  - "Dockerfile"
+  - ".dockerignore"
+  - "Makefile"
+  - ".gitlab-ci.yml"
+
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *pipeline-triggers
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
-    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
+      changes: *pipeline-triggers
+    # Manual ("Run pipeline"), scheduled and API pipelines always run.
+    - if: $CI_PIPELINE_SOURCE != "push" && $CI_COMMIT_BRANCH
 
 .python:
   cache:
