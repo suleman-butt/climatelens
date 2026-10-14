@@ -35,3 +35,6 @@ Thumbs.db
 
 # Internal project docs (not pushed)
 docs/internal/
+
+# Local Claude Code settings
+.claude/

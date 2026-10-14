@@ -1,6 +1,7 @@
 stages:
   - lint
   - test
+  - container
 
 default:
   image: python:3.12.10-slim-bookworm
@@ -21,13 +22,15 @@ workflow:
   cache:
     key:
       files:
-        - pyproject.toml
+        - requirements-dev.lock
     paths:
       - .cache/pip
   before_script:
     # LightGBM's Linux wheel needs the OpenMP runtime, absent from slim images.
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends libgomp1 > /dev/null
-    - python -m pip install -e ".[dev]"
+    # Exact, hash-checked versions of every dependency, then the package itself.
+    - python -m pip install --require-hashes -r requirements-dev.lock
+    - python -m pip install --no-deps -e .
 
 lint:
   extends: .python
@@ -49,3 +52,29 @@ test:
       coverage_report:
         coverage_format: cobertura
         path: coverage.xml
+
+# Build the production image and prove it starts, serves and can load LightGBM.
+# Pushing to a registry and deploying are added with the cloud infrastructure.
+container:
+  stage: container
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    IMAGE: climatelens:$CI_COMMIT_SHORT_SHA
+  before_script:
+    - apk add --no-cache curl > /dev/null
+  script:
+    - docker build --target api -t "$IMAGE" .
+    - docker image ls "$IMAGE"
+    # Runs as the non-root user, with the OpenMP runtime LightGBM needs.
+    - docker run --rm "$IMAGE" sh -c 'test "$(id -u)" = 10001 && climatelens --version && python -c "import lightgbm, climatelens.api"'
+    # Serves on $PORT: liveness is up, forecasts are 503 until a model is published.
+    - docker run -d --name smoke -p 8080:8080 "$IMAGE"
+    - for i in $(seq 1 30); do curl -fs http://docker:8080/healthz && break; sleep 1; done
+    - curl -fs http://docker:8080/healthz | grep -q '"ok"'
+    - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/forecast)" = "503"
+    - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/)" = "503"
+  after_script:
+    - docker logs smoke 2>&1 | tail -20 || true
