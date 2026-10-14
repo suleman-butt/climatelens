@@ -371,3 +371,54 @@ Phase 5 complete (container verification carried over to Phase 6).
   (`interruptible: true`), as intended.
 
 Phase 6 complete.
+
+## 2026-10-14 (evening)
+
+### Phase 7 - GCP infrastructure (Terraform)
+
+- **Project:** `climatelens-iu` (no organisation, personal account), billing
+  account in EUR with trial credit. Tools: Terraform 1.16.5, Google Cloud SDK
+  589.0.0, glab 1.123.0. Terraform authenticates with Application Default
+  Credentials (`gcloud auth application-default login`, quota project
+  `climatelens-iu`); no service-account keys.
+- **Bootstrap** (`infra/bootstrap`, local state): 7 resources - 6 core APIs and
+  the versioned state bucket `climatelens-iu-tfstate`.
+- **Main** (`infra/`, state in GCS, google provider 7.46.1): plan 26 to add,
+  applied in one run with the budget created first (2 s) - EUR 10/month budget
+  (50/90/100% actual, 100% forecast, usage before credits), 7 APIs, data and
+  models buckets (private, versioned, lifecycle rules), Artifact Registry with
+  a keep-10 / 30-day cleanup policy, three service accounts (runtime,
+  scheduler, deployer) with resource-level roles only, Workload Identity pool +
+  provider for gitlab.com restricted to this project on protected refs, Cloud
+  Run service (scale to zero, 1 vCPU / 2 GiB, 900 s timeout) with public
+  invoker, and two Cloud Scheduler jobs with OIDC tokens.
+- **App changes:** GCS storage layer (raw, features, model bundles via
+  `google-cloud-storage`, parallel raw reads); Cloud Scheduler OIDC auth for
+  `/jobs/*` (signature, audience `climatelens-jobs`, exact scheduler service
+  account); service cache reloads when the model pointer or feature table
+  changes; incremental ingest catches up from the last stored day; `/health`
+  alias. 77 tests (in-memory fake GCS client for the gs:// paths).
+- **Blocker found and fixed - Windows commit limit.** The machine had no page
+  file: commit limit = RAM = 15.7 GB, 15.3 GB committed. New processes failed
+  (`fork: Resource temporarily unavailable`, `0xC000012D`
+  STATUS_COMMITMENT_LIMIT); this was also the real cause of the Docker
+  Desktop / WSL VM crashes in Phase 6. After enabling a system-managed page
+  file and restarting, the limit is 28.2 GB and Docker builds are stable.
+- **Data:** 1,135 raw partitions uploaded with `gcloud storage rsync` (1 min
+  44 s; an earlier `cp` attempt died with the memory problem).
+- **Deploy:** image rebuilt locally (dependency layer cached), pushed to
+  Artifact Registry in 42 s, deployed by digest
+  (`manual-202610141849` -> revision 00002; `/health` follow-up
+  `manual-202610141856` -> revision 00003).
+- **Cloud pipeline verified end to end:**
+  - `gcloud scheduler jobs run climatelens-daily-ingest` -> `/jobs/ingest` 200
+    with the scheduler's OIDC token; feature table written to GCS (~20 s).
+  - `gcloud scheduler jobs run climatelens-monthly-train` -> `/jobs/train` 200
+    in 101 s on Cloud Run; bundle 20261014T185456Z published.
+  - Live: `/forecast` (valid 2026-10-14, not stale), `/metrics` (frost Brier
+    0.0567, +50.8% vs climatology; solar MAE 0.843, +10.5%; wind MAE 0.830,
+    +9.9%), dashboard 200 in 0.17 s; `/jobs/train` without a token 401.
+- **Found in testing:** `/healthz` returns Google's 404 from outside Cloud Run
+  (reserved path); fixed with `/health`.
+
+Phase 7 complete (deployments are manual until Phase 8 wires GitLab CI).

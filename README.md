@@ -8,7 +8,7 @@ ClimateLens is a cloud-native weather forecasting service for selected German ci
 
 This project is being developed as an MSc DevOps & Cloud Computing university deliverable. The main focus is a reproducible cloud architecture, automated delivery, and responsible use of machine-learning forecasts.
 
-> **Project status:** The local workflow is complete: ingestion, features, walk-forward evaluation, training, API and dashboard run end to end on locked dependencies, and CI builds and smoke-tests the production image. Cloud deployment (Terraform, GitLab CI/CD deploy) is next.
+> **Project status:** Live on Google Cloud Run, with Terraform-managed infrastructure and scheduled daily ingest and monthly retraining. Automated deployment from GitLab CI and the custom domain are next.
 
 ## Planned Features
 
@@ -42,7 +42,7 @@ DWD weather observations
 Validation and immutable raw storage
           |
           v
-Feature engineering and BigQuery feature table
+Feature engineering, Parquet feature table in Cloud Storage
           |
           v
 Walk-forward training and evaluation
@@ -57,7 +57,7 @@ FastAPI service on Cloud Run
 REST API and server-rendered dashboard
 ```
 
-The initial implementation will use a single Cloud Run service with protected ingestion and training endpoints. The workloads can be separated into Cloud Run Jobs after the local and cloud workflows are stable.
+One Cloud Run service serves the dashboard and API and runs the protected ingestion and training endpoints, which Cloud Scheduler calls daily (ingest) and monthly (retrain). The workloads can be split into Cloud Run Jobs if they outgrow a request.
 
 ## Technology Stack
 
@@ -66,7 +66,7 @@ The initial implementation will use a single Cloud Run service with protected in
 - **Data processing:** pandas and PyArrow
 - **Machine learning:** scikit-learn and LightGBM
 - **Weather data:** `wetterdienst` and DWD open data
-- **Storage:** Google Cloud Storage and BigQuery
+- **Storage:** Google Cloud Storage (raw partitions, feature table, model bundles)
 - **Compute:** Google Cloud Run
 - **Scheduling:** Google Cloud Scheduler
 - **Infrastructure:** Terraform
@@ -137,7 +137,7 @@ and checks that it starts, serves `/healthz` and runs as the non-root user.
 | GET | `/forecast/{city}` | public | Next-day forecast for one city (slug, e.g. `berlin`) |
 | GET | `/cities` | public | The 12 cities and their DWD stations |
 | GET | `/metrics` | public | Walk-forward scores of the served model vs baselines (`?per_city=true`) |
-| GET | `/healthz` | public | Liveness |
+| GET | `/health` | public | Liveness (`/healthz` also works locally; Cloud Run reserves it externally) |
 | POST | `/jobs/ingest` | token | Fetch recent DWD data and rebuild features |
 | POST | `/jobs/train` | token | Evaluate, retrain and publish a new model bundle |
 
@@ -159,26 +159,45 @@ Regression models will report MAE and RMSE. Frost classification will report acc
 
 ## Cloud Deployment
 
-The target region is `europe-west3`. The planned public address is:
+ClimateLens runs on Google Cloud in `europe-west3` (Frankfurt), project
+`climatelens-iu`:
 
 ```text
-https://climatelens.sulemanb.com
+https://climatelens-rsd2eoklsa-ey.a.run.app
 ```
 
-Cloudflare will remain the authoritative DNS provider, while Cloud Run will serve the application and Google will manage the HTTPS certificate.
+The planned custom address `https://climatelens.sulemanb.com` follows with the
+domain mapping (Cloudflare stays the authoritative DNS; Google manages the
+certificate).
+
+| Component | Service |
+|---|---|
+| Dashboard, API, job endpoints | Cloud Run (scales to zero, 1 vCPU / 2 GiB) |
+| Raw data and feature table | Cloud Storage `climatelens-iu-data` |
+| Model bundles and `LATEST` pointer | Cloud Storage `climatelens-iu-models` |
+| Container images | Artifact Registry `climatelens` (keeps the 10 newest) |
+| Daily ingest 09:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
+| GitLab CI to GCP without keys | Workload Identity Federation (pool `gitlab`) |
+| Cost guard | Billing budget alert, EUR 10/month, counting usage before credits |
+
+All of it is Terraform in [`infra/`](infra/):
+
+```bash
+cd infra/bootstrap && terraform init && terraform apply   # once: state bucket + core APIs
+cd infra && terraform init && terraform plan && terraform apply
+```
 
 Deployment principles:
 
-- No service-account JSON keys
-- GitLab CI/CD authentication through Workload Identity Federation (GitLab OIDC tokens)
-- Terraform-managed runtime infrastructure
-- Automatic application deployment from `main`
-- Approval required for production infrastructure changes
-- Budget alert and storage lifecycle policies configured before workloads run
-- Public access limited to the dashboard and read-only forecast API
-- Ingestion and training endpoints protected from arbitrary public invocation
+- No service-account JSON keys anywhere: people use `gcloud` logins, GitLab CI uses Workload Identity Federation, Cloud Run and Scheduler use attached service accounts
+- One least-privilege service account per role (runtime, scheduler, deployer)
+- Terraform owns the infrastructure; CI owns the running image
+- The budget alert is created before any billable API is enabled; storage and registry have lifecycle rules
+- Public access is limited to the dashboard and read-only API; `/jobs/*` accepts only Cloud Scheduler's token (signature, audience and service account checked)
 
-The project uses a Google Cloud learning account with an initial credit allowance. Actual costs depend on usage and Google Cloud pricing. The budget alert is a monitoring control, not a hard spending limit, so resources will be kept minimal and reviewed regularly.
+The project uses a Google Cloud trial credit. The budget alert is a monitoring
+control, not a hard spending limit; expected running cost is well under
+EUR 1/month, mostly container image storage.
 
 ## Responsible Use
 

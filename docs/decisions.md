@@ -246,3 +246,37 @@ pipeline. Manual, scheduled and API pipelines always run. GitLab's `changes:`
 can only express "run if any of these changed", so the rule lists what triggers
 a pipeline rather than what to skip; new top-level code folders must be added
 to `.pipeline-triggers`.
+
+## 2026-10-14: Cloud architecture as deployed (supersedes earlier plans)
+
+- **No BigQuery.** The feature table is ~1 MB of Parquet (13,620 rows). It is
+  stored in Cloud Storage next to the raw partitions and read whole by the
+  service, so BigQuery would add a service, IAM and cost without benefit. The
+  unused `bigquery_dataset` setting was removed. If the data grows by orders of
+  magnitude, BigQuery (or external tables over the same Parquet) is the next
+  step.
+- **One storage interface for local and cloud.** `data.py` addresses every
+  artefact by URI (local path or `gs://`); only a handful of helpers know the
+  difference, so the same pipeline and tests cover both. Over GCS the ~1,100
+  daily raw files are fetched with 16 parallel requests.
+- **Cache refresh instead of instance coordination.** Each Cloud Run instance
+  re-checks the `LATEST` model pointer and the feature table's object
+  generation at most once a minute and reloads when either changed, so a job
+  on one instance reaches all instances without any messaging.
+- **Daily ingest catches up.** The incremental run resumes from the last stored
+  day (capped at 60 days) instead of always fetching two days, so a missed run
+  never leaves a permanent gap.
+- **Two-stage Terraform.** `infra/bootstrap` (local state) creates only the
+  versioned state bucket and core APIs; everything else lives in `infra/` with
+  state in that bucket. The budget alert is created first and every billable
+  API depends on it.
+- **Budget counts usage before credits** (`EXCLUDE_ALL_CREDITS`): on a trial
+  account the credits would otherwise cover all spend and the EUR 10 alert would
+  never fire.
+- **Terraform owns infrastructure, CI owns the image.** The Cloud Run service is
+  created with Google's placeholder image and Terraform ignores later image
+  changes; deployments update the image by digest.
+- **`/health` as the public liveness path.** Cloud Run's front end reserves some
+  paths ending in `z`; `/healthz` returns Google's own 404 from outside (the
+  startup probe still reaches it inside). `/health` was added; `/healthz` stays
+  for container probes and local use.
