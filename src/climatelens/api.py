@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import hmac
 import threading
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -29,10 +30,21 @@ from climatelens.predict import ForecastService, ForecastUnavailable
 
 log = get_logger(__name__)
 
-DISCLAIMER = "Technical demonstrator. Not medical, agricultural, or safety advice."
+DISCLAIMER = (
+    "ClimateLens is a technical demonstrator for educational and research purposes. "
+    "Its forecasts are statistical estimates and must not be relied on for medical, "
+    "agricultural, or safety-critical decisions. For official forecasts and warnings, "
+    "consult the Deutscher Wetterdienst (DWD)."
+)
+
+#: Most cities the dashboard shows side by side.
+MAX_DASHBOARD_CITIES = 3
+DEFAULT_DASHBOARD_CITY = "berlin"
 
 app = FastAPI(title="ClimateLens", version=__version__)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.filters["nice_date"] = lambda iso: date.fromisoformat(iso).strftime("%a %d %b %Y")
+templates.env.filters["month_name"] = lambda iso: date.fromisoformat(iso).strftime("%B")
 
 
 class ServiceCache:
@@ -134,29 +146,48 @@ def metrics(service: ServiceDep, per_city: bool = False) -> dict[str, object]:
     return service.metrics_summary(per_city=per_city)
 
 
+def selected_cities(requested: list[str]) -> list[str]:
+    """Known city slugs from the query, de-duplicated, capped, with a default."""
+    chosen = [c for c in dict.fromkeys(requested) if c in CITIES_BY_SLUG]
+    return chosen[:MAX_DASHBOARD_CITIES] or [DEFAULT_DASHBOARD_CITY]
+
+
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, settings: SettingsDep) -> HTMLResponse:
+def dashboard(
+    request: Request,
+    settings: SettingsDep,
+    city: Annotated[list[str], Query()] = [],  # noqa: B006 - FastAPI query default
+) -> HTMLResponse:
+    selected = selected_cities(city)
+    context: dict[str, object] = {
+        "cities": CITIES,
+        "station_count": len({c.station_id for c in CITIES} | {c.solar_station_id for c in CITIES}),
+        "selected": selected,
+        "max_cities": MAX_DASHBOARD_CITIES,
+        "disclaimer": DISCLAIMER,
+    }
     try:
         service = service_cache.get(settings)
     except ForecastUnavailable as exc:
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"available": False, "reason": str(exc), "disclaimer": DISCLAIMER},
+            {**context, "available": False, "reason": str(exc)},
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-    forecasts = service.forecasts()
+    by_city = {f["city"]: f for f in service.forecasts()}
+    panels = [by_city[slug] for slug in selected if slug in by_city]
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
+            **context,
             "available": True,
-            "forecasts": forecasts,
-            "metrics": service.metrics_summary()["targets"],
+            "panels": panels,
+            "accuracy": service.accuracy(),
+            "about": service.about(),
             "version": service.version,
-            "valid_for": max(f["valid_for"] for f in forecasts),
-            "any_stale": any(f["stale"] for f in forecasts),
-            "disclaimer": DISCLAIMER,
+            "any_stale": any(p["stale"] for p in panels),
         },
     )
 

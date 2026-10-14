@@ -5,8 +5,7 @@ and including day ``t`` and the three targets observed on day ``t + 1``:
 
 * ``target_frost``        - 1 if next-day ``temperature_air_min_2m`` < 0 C, else 0
 * ``target_solar_kwh_m2`` - next-day global radiation, J/cm2 -> kWh/m2
-* ``target_wind_speed``   - next-day mean wind speed (m/s); power potential is
-  derived from it with :func:`wind_power_proxy` (proportional to v^3)
+* ``target_wind_speed``   - next-day mean wind speed (m/s)
 
 Each city is re-indexed onto a full daily calendar before shifting or rolling,
 so a missing day becomes NaN instead of silently pairing ``t`` with ``t + 2``.
@@ -94,11 +93,6 @@ FEATURE_COLUMNS: tuple[str, ...] = tuple(_feature_columns())
 def solar_j_cm2_to_kwh_m2(values: pd.Series) -> pd.Series:
     """Convert DWD daily global radiation (J/cm2) to kWh/m2."""
     return values / J_PER_CM2_PER_KWH_PER_M2
-
-
-def wind_power_proxy(wind_speed: pd.Series | np.ndarray | float):
-    """Relative wind-power potential, proportional to v^3 (v in m/s)."""
-    return wind_speed**3
 
 
 def _min_periods(window: int) -> int:

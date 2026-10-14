@@ -17,7 +17,6 @@ from climatelens.features import (
     latest_rows,
     solar_j_cm2_to_kwh_m2,
     target_frame,
-    wind_power_proxy,
 )
 
 
@@ -95,10 +94,6 @@ def test_calendar_gap_breaks_shift_instead_of_skipping():
 
 def test_solar_unit_conversion():
     assert solar_j_cm2_to_kwh_m2(pd.Series([360.0, 2700.0])).tolist() == [1.0, 7.5]
-
-
-def test_wind_power_proxy_is_cubic():
-    assert wind_power_proxy(np.array([1.0, 2.0, 3.0])).tolist() == [1.0, 8.0, 27.0]
 
 
 def test_missing_target_is_excluded_not_imputed():
