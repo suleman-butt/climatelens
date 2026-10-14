@@ -106,3 +106,26 @@ Consequences:
   instead of GitHub's; the no-JSON-keys principle is unchanged.
 - Production infrastructure approval moves to GitLab protected environments with
   a manual `terraform apply` job.
+
+## 2026-10-14: Feature table design
+
+- **One table, all targets.** Row `t` holds features from data up to day `t` and
+  the three targets from day `t + 1`. Rows with a missing target stay in the
+  table (as NaN) and are dropped per target at training time
+  (`features.target_frame`), so one feature build serves all three models and no
+  target is imputed. The last row per city has no target and is the live
+  prediction input.
+- **Calendar-correct shifts.** Each city is re-indexed onto a full daily
+  calendar before lags, rolling windows and the target shift. A missing day then
+  yields NaN instead of silently treating "two days later" as "tomorrow".
+  Rolling means need just over half the window (`window // 2 + 1`) to be
+  present.
+- **Wind target is mean wind speed in m/s, not v^3.** Wind power potential is
+  proportional to v^3, but v^3 is heavy-tailed and its errors are hard to
+  interpret. The model predicts v (MAE/RMSE in m/s); the dashboard derives the
+  power proxy with `wind_power_proxy(v) = v^3`.
+- **Same-day target values kept beside the targets** (`frost`, `solar_kwh_m2`,
+  `wind_speed`) for the persistence baseline. `solar_kwh_m2` is not a model
+  feature, because the solar station may be up to 60 km away and lags ~6 weeks.
+- **City identity enters only through station metadata** (lat/lon/elevation),
+  not a one-hot city column, so the model shares structure across cities.

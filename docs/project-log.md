@@ -101,3 +101,46 @@ three.
   branch push and merge request, without duplicate branch + MR pipelines.
 - Updated README and docs/decisions.md: GitHub Actions -> GitLab CI/CD,
   Workload Identity Federation via GitLab OIDC.
+
+### Phase 3 - Feature engineering
+
+- Added `features.py` (pure DataFrame code): `build_features`, `target_frame`,
+  `latest_rows`, `feature_report`, unit helpers `solar_j_cm2_to_kwh_m2`
+  (J/cm2 / 360) and `wind_power_proxy` (v^3).
+- 42 model features from the 10 near-complete fields: same-day values,
+  diurnal range, lag-1, day-over-day deltas (temperature, pressure, wind),
+  3/7-day trailing means, 3-day precipitation sum, day-of-year sin/cos, month,
+  station lat/lon/elevation.
+- Targets at t+1: `target_frost`, `target_solar_kwh_m2`, `target_wind_speed`.
+  Same-day `frost` / `solar_kwh_m2` / `wind_speed` kept for the Phase 4
+  persistence baseline.
+- Each city is re-indexed to a full daily calendar before shifting/rolling, so a
+  missing day yields NaN rather than pairing t with t+2.
+- Feature table I/O (`write_features` / `read_features`) added to `data.py`;
+  `Settings.features_uri` -> `data/features/features.parquet`; new CLI command
+  `climatelens features`.
+- Added `tests/test_features.py`: 11 offline tests (next-day alignment,
+  no-look-ahead perturbation test, trailing lag/rolling, calendar-gap handling,
+  unit conversion, missing-target exclusion, per-city independence, report and
+  Parquet round trip). `ruff` + `pytest` green (22 tests).
+
+**Feature build on the 3-year backfill (2023-09-05 -> 2026-09-05).** 13,164
+rows (12 cities), 42 features; worst feature null rate 2.0%
+(`wind_speed_delta1`). Usable rows per target:
+
+| Target | Rows | Per-city completeness | Last target date |
+|---|---|---|---|
+| Frost | 13,152 | 99.9% all cities | 2026-09-04 |
+| Solar | 12,100 | 85.3% (Cologne, Essen) - 95.5% (Dresden) | 2026-07-30 |
+| Wind | 12,937 | 87.8% (Hannover) - 99.9% (Leipzig) | 2026-09-04 |
+
+- Frost positive rate 15.5% overall (Essen 8.9% - Nuremberg 22.5%): imbalanced,
+  so the majority-class baseline and Brier score matter in Phase 4.
+- Solar target sanity: monthly mean 0.58 kWh/m2 (Dec) - 5.93 kWh/m2 (Jun).
+  Wind target mean 3.2 m/s (0.6 - 13.0).
+- **Hannover wind outage:** station 02014 reported no `wind_speed` from
+  2026-03-22 to 2026-07-09 (110 days, plus 16 days in Jun 2025 and 7 in
+  Nov/Dec 2023). Those rows are excluded from the wind target only; frost and
+  solar are unaffected. Noted as a data limitation for per-city wind results.
+
+Phase 3 complete.
