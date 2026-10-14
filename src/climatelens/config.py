@@ -68,6 +68,13 @@ class Settings(BaseSettings):
             return f"gs://{self.data_bucket}/raw"
         return str(self.data_dir / "raw")
 
+    @property
+    def features_uri(self) -> str:
+        """Location of the feature table Parquet file (GCS if configured)."""
+        if self.data_bucket:
+            return f"gs://{self.data_bucket}/features/features.parquet"
+        return str(self.data_dir / "features" / "features.parquet")
+
 
 @lru_cache
 def get_settings() -> Settings:

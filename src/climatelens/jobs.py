@@ -4,6 +4,7 @@ climatelens ingest                      # daily incremental
 climatelens ingest --backfill-years 3   # initial historical load
 climatelens ingest --start 2024-01-01 --end 2024-03-31
 climatelens stations                    # verify the city -> station map (online)
+climatelens features                    # rebuild the feature table from raw
 """
 
 from __future__ import annotations
@@ -19,8 +20,11 @@ from climatelens.data import (
     backfill_range,
     default_incremental_range,
     ingest_range,
+    read_raw,
     resolve_stations,
+    write_features,
 )
+from climatelens.features import build_features, feature_report
 
 log = get_logger("climatelens.jobs")
 
@@ -65,6 +69,19 @@ def _cmd_stations(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_features(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    raw = read_raw(settings.raw_uri)
+    if raw.empty:
+        log.error("no raw data found; run 'climatelens ingest' first")
+        return 1
+    features = build_features(raw)
+    uri = write_features(features, settings.features_uri)
+    report = feature_report(features)
+    print(json.dumps({"event": "features_result", "uri": uri, **report.as_dict()}, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="climatelens", description=__doc__)
     parser.add_argument("--version", action="version", version=f"climatelens {__version__}")
@@ -79,6 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     stations = sub.add_parser("stations", help="verify the city -> DWD station mapping (online)")
     stations.set_defaults(func=_cmd_stations)
+
+    features = sub.add_parser("features", help="rebuild the feature table from raw Parquet")
+    features.set_defaults(func=_cmd_features)
 
     return parser
 

@@ -335,6 +335,34 @@ def read_raw(base_uri: str, start: date | None = None, end: date | None = None) 
     return pd.concat(frames, ignore_index=True).sort_values(["city", "date"]).reset_index(drop=True)
 
 
+# --- Feature table storage --------------------------------------------------
+
+
+def write_features(features: pd.DataFrame, uri: str) -> str:
+    """Write the feature table as a single Parquet file (clean overwrite)."""
+    if _is_gcs(uri):
+        raise NotImplementedError(
+            "GCS feature storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
+        )
+    target = Path(uri)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    features.to_parquet(target, index=False)
+    log.info("wrote feature table", extra={"rows": len(features), "uri": uri})
+    return str(target)
+
+
+def read_features(uri: str) -> pd.DataFrame:
+    """Read the feature table, or an empty frame if it has not been built yet."""
+    if _is_gcs(uri):
+        raise NotImplementedError(
+            "GCS feature storage is wired up in Phase 6; set CLIMATELENS_DATA_DIR for now"
+        )
+    target = Path(uri)
+    if not target.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(target)
+
+
 # --- Ingestion orchestration ----------------------------------------------
 
 
