@@ -4,6 +4,11 @@ resource "google_artifact_registry_repository" "images" {
   format        = "DOCKER"
   description   = "ClimateLens container images"
 
+  # A version tag (v1.0.0) can be pushed once and never moved to another image.
+  docker_config {
+    immutable_tags = true
+  }
+
   # Images are ~0.5 GB compressed; keep the 10 most recent, delete the rest.
   cleanup_policy_dry_run = false
   cleanup_policies {

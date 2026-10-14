@@ -13,10 +13,19 @@ RUN pip install --require-hashes -r requirements.lock
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-deps .
+# Trim what never runs in production: the test suites bundled inside packages
+# (~135 MB, e.g. pandas/tests) and pip itself. Compiled .pyc files stay - they
+# keep Cloud Run cold starts fast, and the non-root runtime cannot rebuild them.
+RUN pip install --no-deps . \
+    && find /opt/venv/lib/python3.12/site-packages -type d -name tests -prune -exec rm -rf {} + \
+    && pip uninstall --yes --quiet pip
 
 FROM python:3.12.10-slim-bookworm AS api
 
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="climatelens" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://gitlab.com/sulemanb/devops-cloud/climatelens"
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH \

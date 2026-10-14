@@ -63,11 +63,14 @@
     .theme svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .when strong { display: block; color: var(--text); font-size: 17px; white-space: nowrap; }
 
-    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+    /* Both columns end on the same line: the sidebar stretches to the panels' height. */
+    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: stretch; }
+    aside { display: flex; flex-direction: column; }
     .layout > * { min-width: 0; }
 
     /* Sidebar city picker */
-    .picker { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 10px; position: sticky; top: 16px; }
+    .picker { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 10px; flex: 1; display: flex; flex-direction: column; }
+    .picker .note { margin: auto 6px 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; }
     .picker h2 { margin: 0 6px 2px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
     .picker .hint { margin: 0 6px 10px; font-size: 12.5px; color: var(--faint); }
     .picker .hint.limit { color: var(--warn-text); }
@@ -81,18 +84,18 @@
 
     /* City panels */
     .banner { background: var(--warn-bg); color: var(--warn-text); border-radius: 10px; padding: 10px 14px; margin-bottom: 18px; font-size: 14px; }
-    .panel + .panel { margin-top: 28px; }
-    .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 12px; }
+    .panel + .panel { margin-top: 18px; }
+    .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
     .panel-head h2 { margin: 0; font-size: 20px; }
     .panel-head span { color: var(--muted); font-size: 13px; }
     .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
     .card-top { display: flex; align-items: center; gap: 10px; }
     .icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; flex: none; }
     .icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .card h3 { margin: 0; font-size: 15px; }
     .card .for { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
-    .answer { margin: 4px 0 0; font-size: 22px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
+    .answer { margin: 2px 0 0; font-size: 21px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
     .detail { margin: 0; color: var(--muted); font-size: 14px; }
     .detail strong { color: var(--text); font-variant-numeric: tabular-nums; }
     .frost .icon { background: var(--frost-soft); color: var(--frost); }
@@ -130,7 +133,8 @@
     }
     @media (max-width: 760px) {
       .layout { grid-template-columns: 1fr; gap: 16px; }
-      .picker { position: static; padding: 12px 10px; }
+      .picker { padding: 12px 10px; }
+      .picker .note { display: none; }
       .cities { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
       .cities li:has(input:checked) { order: -1; }
       .city-opt { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
@@ -190,6 +194,7 @@
           {% endfor %}
         </ul>
         <noscript><button class="apply" type="submit">Show forecasts</button></noscript>
+        <p class="note">Updated daily from DWD observations; the model is retrained monthly.</p>
       </form>
     </aside>
 
@@ -318,7 +323,7 @@
     <div class="links">
       <span class="credit">Created by Suleman Butt &middot; MSc DevOps &amp; Cloud Computing, IU International University</span>
       <span>Source data: Deutscher Wetterdienst (DWD) open data</span>
-      {% if version %}<span>Model version {{ version }}</span>{% endif %}
+      <span>App v{{ app_version }}{% if version %} &middot; model {{ version }}{% endif %}</span>
       <span><a href="/docs">API documentation</a></span>
     </div>
   </footer>

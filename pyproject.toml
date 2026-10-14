@@ -4,13 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "climatelens"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Cloud-native weather forecasts for German cities"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.115.6",
-    "google-cloud-bigquery==3.27.0",
     "google-cloud-storage==2.19.0",
     "jinja2==3.1.6",
     "lightgbm==4.5.0",
@@ -32,6 +31,10 @@ dev = [
 
 [project.scripts]
 climatelens = "climatelens.jobs:main"
+
+[tool.setuptools.dynamic]
+# Single source of truth: climatelens.__version__ (also the image tag, vX.Y.Z).
+version = {attr = "climatelens.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

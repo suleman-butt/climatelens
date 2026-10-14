@@ -1,6 +1,9 @@
-.PHONY: install lock lint test pipeline serve build run container-pipeline deploy destroy
+.PHONY: install lock lint test pipeline serve build run container-pipeline version release-image deploy destroy
 
 IMAGE ?= climatelens:local
+# Release version: climatelens.__version__ is the single source of truth.
+VERSION := $(shell python -c "import re; print(re.search(r'__version__ = \"(.+)\"', open('src/climatelens/__init__.py').read()).group(1))")
+REGISTRY ?= europe-west3-docker.pkg.dev/climatelens-iu/climatelens/climatelens
 # Local data and model folders mounted into the container.
 VOLUMES = -v "$(CURDIR)/data:/app/data" -v "$(CURDIR)/models:/app/models"
 
@@ -31,7 +34,7 @@ serve:
 	python -m uvicorn climatelens.api:app --port 8000 --reload --reload-dir src
 
 build:
-	docker build --target api -t $(IMAGE) .
+	docker build --target api --build-arg VERSION=$(VERSION) -t $(IMAGE) .
 
 # Serve the dashboard from the container on http://localhost:8080.
 run:
@@ -42,6 +45,15 @@ container-pipeline:
 	docker run --rm $(VOLUMES) $(IMAGE) climatelens ingest
 	docker run --rm $(VOLUMES) $(IMAGE) climatelens features
 	docker run --rm $(VOLUMES) $(IMAGE) climatelens train
+
+version:
+	@echo $(VERSION)
+
+# Build and push v$(VERSION) to Artifact Registry. Tags are immutable there, so
+# bump __version__ before releasing again. (Phase 8 moves this into CI.)
+release-image:
+	docker build --target api --build-arg VERSION=$(VERSION) -t $(REGISTRY):v$(VERSION) .
+	docker push $(REGISTRY):v$(VERSION)
 
 deploy:
 	@echo "Deployment is added with the Terraform infrastructure (Phase 7)."

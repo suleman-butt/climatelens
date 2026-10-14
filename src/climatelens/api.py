@@ -216,6 +216,7 @@ def dashboard(
         "selected": selected,
         "max_cities": MAX_DASHBOARD_CITIES,
         "disclaimer": DISCLAIMER,
+        "app_version": __version__,
     }
     try:
         service = service_cache.get(settings)

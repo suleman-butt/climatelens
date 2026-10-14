@@ -384,3 +384,11 @@ def test_cache_skips_checks_within_refresh_window(bundle_dirs, monkeypatch):
     first = cache.get(settings)
     monkeypatch.setattr(api, "latest_model_version", lambda uri: pytest.fail("checked too soon"))
     assert cache.get(settings) is first
+
+
+def test_dashboard_shows_app_version_and_update_note(client):
+    from climatelens import __version__
+
+    html = client.get("/").text
+    assert f"App v{__version__}" in html
+    assert "Updated daily from DWD observations" in html
