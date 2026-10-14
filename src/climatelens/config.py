@@ -75,6 +75,13 @@ class Settings(BaseSettings):
             return f"gs://{self.data_bucket}/features/features.parquet"
         return str(self.data_dir / "features" / "features.parquet")
 
+    @property
+    def models_uri(self) -> str:
+        """Base location for versioned model bundles (GCS if configured)."""
+        if self.models_bucket:
+            return f"gs://{self.models_bucket}/models"
+        return str(self.model_dir)
+
 
 @lru_cache
 def get_settings() -> Settings:

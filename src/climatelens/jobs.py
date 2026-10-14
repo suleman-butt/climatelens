@@ -5,12 +5,15 @@ climatelens ingest --backfill-years 3   # initial historical load
 climatelens ingest --start 2024-01-01 --end 2024-03-31
 climatelens stations                    # verify the city -> station map (online)
 climatelens features                    # rebuild the feature table from raw
+climatelens evaluate                    # walk-forward models vs baselines (no artefacts)
+climatelens train                       # evaluate, refit winners, write a model bundle
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 
@@ -20,11 +23,15 @@ from climatelens.data import (
     backfill_range,
     default_incremental_range,
     ingest_range,
+    read_features,
     read_raw,
     resolve_stations,
     write_features,
+    write_model_bundle,
 )
-from climatelens.features import build_features, feature_report
+from climatelens.evaluate import evaluate_all, train_final
+from climatelens.features import FEATURE_COLUMNS, build_features, feature_report
+from climatelens.models import LightGBMModel
 
 log = get_logger("climatelens.jobs")
 
@@ -82,6 +89,107 @@ def _cmd_features(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_features():
+    features = read_features(get_settings().features_uri)
+    if features.empty:
+        log.error("no feature table found; run 'climatelens features' first")
+    return features
+
+
+def _evaluation_summary(evaluations) -> dict[str, object]:
+    return {
+        target: {
+            "best_model": ev.best_model,
+            "folds": ev.folds,
+            "test_start": ev.test_start,
+            "test_end": ev.test_end,
+            "test_rows": ev.test_rows,
+            "overall": ev.overall,
+        }
+        for target, ev in evaluations.items()
+    }
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    features = _load_features()
+    if features.empty:
+        return 1
+    evaluations = evaluate_all(features)
+    if args.per_city:
+        payload = {t: ev.as_dict() for t, ev in evaluations.items()}
+    else:
+        payload = _evaluation_summary(evaluations)
+    print(json.dumps({"event": "evaluate_result", "targets": payload}, indent=2))
+    return 0
+
+
+def _library_versions() -> dict[str, str]:
+    import lightgbm
+    import pandas
+    import sklearn
+
+    return {
+        "lightgbm": lightgbm.__version__,
+        "pandas": pandas.__version__,
+        "scikit-learn": sklearn.__version__,
+    }
+
+
+def _cmd_train(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    features = _load_features()
+    if features.empty:
+        return 1
+    evaluations = evaluate_all(features)
+    trained = train_final(features, evaluations)
+
+    created = datetime.now(UTC)
+    manifest: dict[str, object] = {
+        "version": created.strftime("%Y%m%dT%H%M%SZ"),
+        "created_at": created.isoformat(),
+        "code_version": __version__,
+        "git_sha": os.environ.get("CI_COMMIT_SHA", ""),
+        "targets": list(trained),
+        "feature_columns": list(FEATURE_COLUMNS),
+        "libraries": _library_versions(),
+        "models": {
+            target: {
+                "model": t.model.name,
+                "train_rows": t.train_rows,
+                "train_start": t.train_start,
+                "train_end": t.train_end,
+                **(
+                    {
+                        "params": t.model.params,
+                        "top_features": dict(list(t.model.feature_importance().items())[:10]),
+                    }
+                    if isinstance(t.model, LightGBMModel)
+                    else {}
+                ),
+            }
+            for target, t in trained.items()
+        },
+    }
+    metrics = {t: ev.as_dict() for t, ev in evaluations.items()}
+    uri = write_model_bundle(
+        {target: t.model for target, t in trained.items()}, manifest, metrics, settings.models_uri
+    )
+    print(
+        json.dumps(
+            {
+                "event": "train_result",
+                "uri": uri,
+                "version": manifest["version"],
+                "models": manifest["models"],
+                "evaluation": _evaluation_summary(evaluations),
+            },
+            indent=2,
+            default=str,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="climatelens", description=__doc__)
     parser.add_argument("--version", action="version", version=f"climatelens {__version__}")
@@ -99,6 +207,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     features = sub.add_parser("features", help="rebuild the feature table from raw Parquet")
     features.set_defaults(func=_cmd_features)
+
+    evaluate = sub.add_parser("evaluate", help="walk-forward evaluation vs baselines")
+    evaluate.add_argument("--per-city", action="store_true", help="include per-city metrics")
+    evaluate.set_defaults(func=_cmd_evaluate)
+
+    train = sub.add_parser("train", help="evaluate, refit the best model per target, save it")
+    train.set_defaults(func=_cmd_train)
 
     return parser
 

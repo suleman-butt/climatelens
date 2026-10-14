@@ -6,6 +6,7 @@ All cloud and network I/O for the project lives here (and in ``jobs.py``).
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -361,6 +362,69 @@ def read_features(uri: str) -> pd.DataFrame:
     if not target.exists():
         return pd.DataFrame()
     return pd.read_parquet(target)
+
+
+# --- Model bundle storage ----------------------------------------------------
+
+#: File in the models root naming the bundle version the API should serve.
+LATEST_POINTER = "LATEST"
+
+
+def write_model_bundle(
+    models: dict[str, object],
+    manifest: dict[str, object],
+    metrics: dict[str, object],
+    base_uri: str,
+) -> str:
+    """Write ``<base>/<version>/`` (one joblib per target + JSON) and move LATEST.
+
+    Bundles are immutable: an existing version directory is never overwritten.
+    """
+    if _is_gcs(base_uri):
+        raise NotImplementedError(
+            "GCS model storage is wired up in Phase 6; set CLIMATELENS_MODEL_DIR for now"
+        )
+    import joblib
+
+    version = str(manifest["version"])
+    root = Path(base_uri)
+    bundle = root / version
+    bundle.mkdir(parents=True, exist_ok=False)
+    for target, model in models.items():
+        joblib.dump(model, bundle / f"{target}.joblib")
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
+    (bundle / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str))
+    # Pointer is written last, so readers never see a half-written bundle.
+    (root / LATEST_POINTER).write_text(version + "\n")
+    log.info("wrote model bundle", extra={"version": version, "uri": str(bundle)})
+    return str(bundle)
+
+
+def latest_model_version(base_uri: str) -> str | None:
+    if _is_gcs(base_uri):
+        raise NotImplementedError(
+            "GCS model storage is wired up in Phase 6; set CLIMATELENS_MODEL_DIR for now"
+        )
+    pointer = Path(base_uri) / LATEST_POINTER
+    if not pointer.exists():
+        return None
+    return pointer.read_text().strip() or None
+
+
+def read_model_bundle(
+    base_uri: str, version: str | None = None
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """Load ``(models, manifest, metrics)`` for a version (default: LATEST)."""
+    import joblib
+
+    version = version or latest_model_version(base_uri)
+    if version is None:
+        raise FileNotFoundError(f"no model bundle under {base_uri}; run 'climatelens train'")
+    bundle = Path(base_uri) / version
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    metrics = json.loads((bundle / "metrics.json").read_text())
+    models = {t: joblib.load(bundle / f"{t}.joblib") for t in manifest["targets"]}
+    return models, manifest, metrics
 
 
 # --- Ingestion orchestration ----------------------------------------------
