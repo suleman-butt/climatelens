@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -135,7 +136,7 @@ def test_forecast_always_targets_tomorrow(bundle_dirs, today, horizon):
 def test_old_bundle_without_horizons_still_serves(bundle_dirs):
     settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
     service = ForecastService.load(settings)
-    service.models = {t: m for t, m in service.models.items() if "_h" not in t}
+    service.predictions = {t: v for t, v in service.predictions.items() if "_h" not in t}
     assert service.available_horizons() == [1]
     berlin = service.forecast("berlin", today=date(2023, 5, 16))
     assert berlin["horizon_days"] == 1
@@ -484,3 +485,83 @@ def test_data_date_is_stated_once_and_older_cities_are_flagged(client, monkeypat
     monkeypatch.setattr(service, "forecasts", with_old_munich)
     html = client.get("/", params={"city": ["berlin", "munich"]}).text
     assert html.count("Older data: up to Wed 10 May 2023") == 1
+
+
+# --- Forecast snapshot (fast cold starts) -----------------------------------------
+
+
+def _settings(root):
+    return Settings(data_dir=root / "data", model_dir=root / "models")
+
+
+def test_snapshot_is_written_and_used_without_loading_models(tmp_path, bundle_dirs, monkeypatch):
+    import shutil
+
+    import climatelens.predict as predict
+
+    shutil.copytree(bundle_dirs, tmp_path, dirs_exist_ok=True)
+    settings = _settings(tmp_path)
+    built = ForecastService.load(settings)  # slow path: builds and writes the snapshot
+    assert Path(settings.snapshot_uri).exists()
+
+    def no_models(*args, **kwargs):
+        raise AssertionError("models must not be loaded when the snapshot is current")
+
+    monkeypatch.setattr(predict, "read_model_bundle", no_models)
+    fast = ForecastService.load(settings)
+    today = date(2023, 5, 16)
+    assert fast.forecasts(today) == built.forecasts(today)
+    assert fast.metrics_summary() == built.metrics_summary()
+    assert fast.about(horizon=2) == built.about(horizon=2)
+
+
+def test_stale_snapshot_is_rebuilt_after_new_data(tmp_path, bundle_dirs):
+    import json
+    import shutil
+    import time as _time
+
+    shutil.copytree(bundle_dirs, tmp_path, dirs_exist_ok=True)
+    settings = _settings(tmp_path)
+    ForecastService.load(settings)
+    first = json.loads(Path(settings.snapshot_uri).read_text())
+
+    _time.sleep(0.01)
+    features = Path(settings.features_uri)
+    features.write_bytes(features.read_bytes())  # rewritten: new fingerprint
+    ForecastService.load(settings)
+    second = json.loads(Path(settings.snapshot_uri).read_text())
+    assert second["features_fingerprint"] != first["features_fingerprint"]
+
+
+def test_feature_job_refreshes_the_snapshot(tmp_path, bundle_dirs, monkeypatch):
+    import shutil
+
+    import climatelens.pipeline as pipeline
+
+    shutil.copytree(bundle_dirs, tmp_path, dirs_exist_ok=True)
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(pipeline, "read_raw", lambda uri: _seasonal_raw("berlin", days=500))
+    result = pipeline.run_features(settings)
+    assert result["snapshot"] == settings.snapshot_uri
+    assert Path(settings.snapshot_uri).exists()
+
+
+def test_snapshot_skipped_without_a_model(tmp_path):
+    from climatelens.pipeline import refresh_snapshot
+
+    assert refresh_snapshot(_settings(tmp_path))["snapshot"] == "skipped"
+
+
+# --- Cache headers (Firebase CDN) -----------------------------------------------
+
+
+def test_pages_and_api_are_briefly_cacheable(client):
+    for path in ("/", "/forecast", "/forecast/berlin", "/cities", "/metrics"):
+        assert client.get(path).headers["cache-control"] == api.PUBLIC_CACHE, path
+
+
+def test_health_errors_and_jobs_are_never_cached(client, empty_client):
+    assert client.get("/health").headers["cache-control"] == "no-store"
+    assert empty_client.get("/forecast").headers["cache-control"] == "no-store"  # 503
+    assert client.get("/forecast/atlantis").headers["cache-control"] == "no-store"  # 404
+    assert client.post("/jobs/train").headers["cache-control"] == "no-store"  # 401

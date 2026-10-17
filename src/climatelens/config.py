@@ -83,6 +83,13 @@ class Settings(BaseSettings):
         return str(self.data_dir / "features" / "features.parquet")
 
     @property
+    def snapshot_uri(self) -> str:
+        """Precomputed forecasts the web service reads (GCS if configured)."""
+        if self.data_bucket:
+            return f"gs://{self.data_bucket}/forecasts/snapshot.json"
+        return str(self.data_dir / "forecasts" / "snapshot.json")
+
+    @property
     def models_uri(self) -> str:
         """Base location for versioned model bundles (GCS if configured)."""
         if self.models_bucket:

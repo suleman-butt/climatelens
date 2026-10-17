@@ -49,3 +49,26 @@ resource "google_cloud_scheduler_job" "train" {
 
   depends_on = [google_project_service.apis]
 }
+
+# Keep-warm: a cheap GET on the public /health endpoint during the day so
+# visitors rarely meet a cold start. Each ping is billed for well under a
+# second of request time; this is the 3rd job, inside Scheduler's free tier.
+resource "google_cloud_scheduler_job" "keep_warm" {
+  name             = "climatelens-keep-warm"
+  description      = "Ping /health during the day to keep one instance warm"
+  region           = var.region
+  schedule         = var.keep_warm_schedule
+  time_zone        = "Europe/Berlin"
+  attempt_deadline = "30s"
+
+  retry_config {
+    retry_count = 0
+  }
+
+  http_target {
+    http_method = "GET"
+    uri         = "${google_cloud_run_v2_service.app.uri}/health"
+  }
+
+  depends_on = [google_project_service.apis]
+}

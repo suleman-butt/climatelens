@@ -52,3 +52,13 @@ variable "custom_domain" {
   type        = string
   default     = "climatelens.sulemanb.com"
 }
+
+variable "keep_warm_schedule" {
+  description = <<-EOF2
+    Cron (Europe/Berlin) for the keep-warm ping. Cloud Run keeps an idle
+    instance for up to ~15 minutes, so a ping every 10 minutes during the day
+    avoids most cold starts; at night the service may scale to zero.
+  EOF2
+  type        = string
+  default     = "*/10 7-22 * * *"
+}

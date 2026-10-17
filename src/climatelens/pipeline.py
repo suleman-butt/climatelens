@@ -32,6 +32,18 @@ class PipelineError(RuntimeError):
     """A step cannot run because an earlier step has not produced its input."""
 
 
+def refresh_snapshot(settings: Settings) -> dict[str, object]:
+    """Precompute today's forecasts for the web service (after features/train)."""
+    from climatelens.predict import ForecastService, ForecastUnavailable
+
+    try:
+        service = ForecastService.load(settings)
+    except ForecastUnavailable as exc:
+        log.info("forecast snapshot skipped", extra={"reason": str(exc)})
+        return {"snapshot": "skipped", "reason": str(exc)}
+    return {"snapshot": settings.snapshot_uri, "model_version": service.version}
+
+
 def run_ingest(settings: Settings, start: datetime, end: datetime) -> dict[str, object]:
     result = ingest_range(start, end, settings.raw_uri)
     return {"event": "ingest_result", **result.__dict__}
@@ -61,7 +73,12 @@ def run_features(settings: Settings) -> dict[str, object]:
         raise PipelineError("no raw data found; run 'climatelens ingest' first")
     features = build_features(raw)
     uri = write_features(features, settings.features_uri)
-    return {"event": "features_result", "uri": uri, **feature_report(features).as_dict()}
+    return {
+        "event": "features_result",
+        "uri": uri,
+        **feature_report(features).as_dict(),
+        **refresh_snapshot(settings),
+    }
 
 
 def _load_features(settings: Settings):
@@ -199,6 +216,7 @@ def run_train(settings: Settings, force: bool = False) -> dict[str, object]:
         "version": manifest["version"],
         "published": publish,
         "quality_gate": manifest["quality_gate"],
+        **(refresh_snapshot(settings) if publish else {"snapshot": "unchanged"}),
         "models": manifest["models"],
         "evaluation": evaluation_summary(evaluations),
     }

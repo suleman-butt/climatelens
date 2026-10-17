@@ -102,13 +102,16 @@ worse than the model it would replace.
 ```
 
 Everything runs in `europe-west3` (Frankfurt), project `climatelens-iu`.
-Cloud Run scales to zero when idle. Firebase Hosting fronts the service
+Cloud Run scales to zero when idle. Pages stay fast because the daily and
+monthly jobs precompute the forecasts into a small snapshot the website reads
+(no model loading on the web path), a keep-warm ping runs during the day, and
+Firebase Hosting caches pages for five minutes. Firebase Hosting fronts the service
 because Cloud Run's own domain mapping is not available in this region; a
 load balancer would have cost more than the whole monthly budget.
 
 ### Google Cloud resources
 
-All 40 resources are defined in Terraform ([`infra/`](infra/)); none were
+All 41 resources are defined in Terraform ([`infra/`](infra/)); none were
 created by hand.
 
 | Service | Resource | Purpose |
@@ -121,6 +124,7 @@ created by hand.
 | **Artifact Registry** | Docker repository `climatelens` | Container images; immutable `vX.Y.Z` tags, keeps the 10 newest |
 | **Cloud Scheduler** | Job `climatelens-daily-ingest` | Daily 15:30: fetch new observations, rebuild features |
 | | Job `climatelens-monthly-train` | 1st of the month 11:00: evaluate, retrain, publish |
+| | Job `climatelens-keep-warm` | Every 10 minutes 07:00-23:00: pings `/health` so visitors rarely meet a cold start |
 | **IAM** | Service account `climatelens-run` | Runtime identity of Cloud Run; read/write on the two data buckets only |
 | | Service account `climatelens-scheduler` | Signs the scheduler's OIDC tokens |
 | | Service account `climatelens-deployer` | Used by GitLab CI: push images, deploy this one service |
@@ -141,7 +145,7 @@ compute fits Google's free tiers.
 - **Infrastructure as code:** two-stage Terraform - a small bootstrap creates
   the state bucket, the main configuration everything else. The budget alert
   is created before any billable service.
-- **CI/CD (GitLab):** every code change runs lint, tests (92 automated tests)
+- **CI/CD (GitLab):** every code change runs lint, tests (98 automated tests)
   and a container build with smoke test. A release is a protected git tag
   `vX.Y.Z`: the pipeline checks the tag against the code version, builds and
   tests the image, pushes it with an immutable tag and deploys exactly that
@@ -156,6 +160,9 @@ compute fits Google's free tiers.
   training (retraining on the same data gives identical models); versioned,
   immutable model bundles that record their training data, parameters and
   evaluation.
+- **Fast cold starts:** forecasts are precomputed into a snapshot after each
+  ingest and retrain, so a new instance serves from one small file instead of
+  loading models (service load ~3 s -> ~0 s).
 - **Reliability:** a missed daily run is caught up automatically; running
   instances pick up new data and models within a minute; a quality gate
   blocks worse models; the non-root container fails closed when no model is

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hmac
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -43,7 +44,43 @@ DISCLAIMER = (
 MAX_DASHBOARD_CITIES = 3
 DEFAULT_DASHBOARD_CITY = "berlin"
 
-app = FastAPI(title="ClimateLens", version=__version__)
+#: Successful pages and API responses may be cached briefly: Firebase Hosting's
+#: CDN for 5 minutes (s-maxage), browsers for 1 minute. Forecasts change once a
+#: day, so this hides cold starts from repeat visitors at no real cost.
+CACHEABLE_PATHS = ("/", "/forecast", "/cities", "/metrics")
+PUBLIC_CACHE = "public, max-age=60, s-maxage=300"
+
+
+def _preload() -> None:
+    """Warm the forecast service in the background when an instance starts."""
+    try:
+        service_cache.get(get_settings())
+    except Exception:  # no model yet, storage hiccup: the first request retries
+        log.info("forecast service not preloaded", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    threading.Thread(target=_preload, name="preload", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="ClimateLens", version=__version__, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    cacheable = path in CACHEABLE_PATHS or path.startswith("/forecast/")
+    if request.method == "GET" and response.status_code == 200 and cacheable:
+        response.headers["Cache-Control"] = PUBLIC_CACHE
+    elif "Cache-Control" not in response.headers:
+        # Health checks, errors (e.g. 503 before a model exists) and jobs.
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["nice_date"] = lambda iso: date.fromisoformat(iso).strftime("%a %d %b %Y")
 templates.env.filters["month_name"] = lambda iso: date.fromisoformat(iso).strftime("%B")

@@ -19,7 +19,14 @@ import numpy as np
 import pandas as pd
 
 from climatelens.config import CITIES_BY_SLUG, Settings, get_logger
-from climatelens.data import read_features, read_model_bundle
+from climatelens.data import (
+    fingerprint,
+    latest_model_version,
+    read_features,
+    read_json,
+    read_model_bundle,
+    write_json,
+)
 from climatelens.evaluate import FROST_DECISION_THRESHOLD
 from climatelens.features import HORIZONS, TARGETS, latest_rows, split_target, target_name
 from climatelens.models import is_classification
@@ -96,26 +103,48 @@ def solar_outlook(vs_typical: float | None) -> str | None:
     return "typical"
 
 
+#: Bump when the snapshot layout changes; older snapshots are then rebuilt.
+SNAPSHOT_SCHEMA = 1
+
+
 @dataclass
 class ForecastService:
-    models: dict[str, object]
+    """Everything the dashboard and API need, without models or the feature table.
+
+    ``predictions`` holds every served target (all horizons) for each city's
+    newest feature row; which horizon is "tomorrow" is decided per request, so
+    a snapshot written in the afternoon stays correct after midnight.
+    """
+
     manifest: dict[str, object]
     metrics: dict[str, dict]
-    latest: pd.DataFrame
+    #: target name -> city slug -> predicted value
+    predictions: dict[str, dict[str, float]]
+    #: city slug -> ISO date of its newest observation
+    based_on: dict[str, str]
     #: Mean daily solar kWh/m2 per (city, month), for "vs typical" solar.
     typical_solar: dict[tuple[str, int], float] = field(default_factory=dict)
     #: Size and span of the feature table, for the "How it works" summary.
     data_summary: dict[str, object] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, settings: Settings) -> ForecastService:
-        try:
-            models, manifest, metrics = read_model_bundle(settings.models_uri)
-        except FileNotFoundError as exc:
-            raise ForecastUnavailable(str(exc)) from exc
-        features = read_features(settings.features_uri)
-        if features.empty:
-            raise ForecastUnavailable("no feature table; run 'climatelens features'")
+    def build(
+        cls,
+        models: dict[str, object],
+        manifest: dict[str, object],
+        metrics: dict[str, dict],
+        features: pd.DataFrame,
+    ) -> ForecastService:
+        """Predict every target for each city's newest row (the slow path)."""
+        rows = latest_rows(features).reset_index(drop=True)
+        cities = rows["city"].astype(str).tolist()
+        predictions = {
+            target: dict(zip(cities, (float(v) for v in model.predict(rows)), strict=True))
+            for target, model in models.items()
+        }
+        based_on = {
+            c: pd.Timestamp(d).date().isoformat() for c, d in zip(cities, rows["date"], strict=True)
+        }
         months = pd.to_datetime(features["date"]).dt.month
         typical_solar = features["solar_kwh_m2"].groupby([features["city"], months]).mean()
         dates = pd.to_datetime(features["date"])
@@ -126,15 +155,79 @@ class ForecastService:
             "end": dates.max().date().isoformat(),
             "years": round((dates.max() - dates.min()).days / 365.25, 1),
         }
-        log.info("forecast service loaded", extra={"version": manifest.get("version")})
         return cls(
-            models,
             manifest,
             metrics,
-            latest_rows(features),
+            predictions,
+            based_on,
             {(str(c), int(m)): float(v) for (c, m), v in typical_solar.dropna().items()},
             data_summary,
         )
+
+    def to_snapshot(self, features_fingerprint: str | None) -> dict[str, object]:
+        return {
+            "schema": SNAPSHOT_SCHEMA,
+            "model_version": self.version,
+            "features_fingerprint": features_fingerprint,
+            "generated_at": datetime.now(LOCAL_TZ).isoformat(),
+            "manifest": {k: self.manifest.get(k) for k in ("version", "created_at", "models")},
+            "metrics": self.metrics,
+            "predictions": self.predictions,
+            "based_on": self.based_on,
+            "typical_solar": [[c, m, v] for (c, m), v in self.typical_solar.items()],
+            "data_summary": self.data_summary,
+        }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: dict) -> ForecastService:
+        return cls(
+            snapshot["manifest"],
+            snapshot["metrics"],
+            snapshot["predictions"],
+            snapshot["based_on"],
+            {(str(c), int(m)): float(v) for c, m, v in snapshot["typical_solar"]},
+            snapshot["data_summary"],
+        )
+
+    @classmethod
+    def load(cls, settings: Settings, write_snapshot: bool = True) -> ForecastService:
+        """Serve from the snapshot when it matches the current model and data.
+
+        Otherwise build from the model bundle and feature table once, and save
+        a fresh snapshot (if allowed) so the next cold start is fast again.
+        """
+        version = latest_model_version(settings.models_uri)
+        if version is None:
+            raise ForecastUnavailable(f"no model bundle under {settings.models_uri}")
+        features_fp = fingerprint(settings.features_uri)
+        if features_fp is None:
+            raise ForecastUnavailable("no feature table; run 'climatelens features'")
+
+        snapshot = read_json(settings.snapshot_uri)
+        if (
+            snapshot
+            and snapshot.get("schema") == SNAPSHOT_SCHEMA
+            and snapshot.get("model_version") == version
+            and snapshot.get("features_fingerprint") == features_fp
+        ):
+            log.info("forecast service loaded from snapshot", extra={"version": version})
+            return cls.from_snapshot(snapshot)
+
+        try:
+            models, manifest, metrics = read_model_bundle(settings.models_uri, version)
+        except FileNotFoundError as exc:
+            raise ForecastUnavailable(str(exc)) from exc
+        features = read_features(settings.features_uri)
+        if features.empty:
+            raise ForecastUnavailable("no feature table; run 'climatelens features'")
+        service = cls.build(models, manifest, metrics, features)
+        log.info("forecast service built from models", extra={"version": version})
+        if write_snapshot:
+            try:
+                write_json(settings.snapshot_uri, service.to_snapshot(features_fp))
+            except Exception:  # a read-only replica still serves, just slower
+                log.warning("could not write forecast snapshot", exc_info=True)
+        return service
 
     @property
     def version(self) -> str:
@@ -143,28 +236,23 @@ class ForecastService:
     def forecasts(self, today: date | None = None) -> list[dict[str, object]]:
         """One forecast per city, in the order of ``config.CITIES``."""
         today = today or local_today()
-        rows = self.latest.reset_index(drop=True)
-        preds = {target: model.predict(rows) for target, model in self.models.items()}
-        out = [self._city_forecast(rows, i, preds, today) for i in range(len(rows))]
+        out = [self._city_forecast(slug, today) for slug in self.based_on if slug in CITIES_BY_SLUG]
         order = list(CITIES_BY_SLUG)
         return sorted(out, key=lambda f: order.index(f["city"]) if f["city"] in order else 99)
 
     def forecast(self, slug: str, today: date | None = None) -> dict[str, object] | None:
         return next((f for f in self.forecasts(today) if f["city"] == slug), None)
 
-    def _city_forecast(
-        self, rows: pd.DataFrame, i: int, preds: dict[str, np.ndarray], today: date
-    ) -> dict[str, object]:
-        slug = str(rows.loc[i, "city"])
+    def _city_forecast(self, slug: str, today: date) -> dict[str, object]:
         city = CITIES_BY_SLUG[slug]
-        based_on = pd.Timestamp(rows.loc[i, "date"]).date()
+        based_on = date.fromisoformat(self.based_on[slug])
         age = (today - based_on).days
         tomorrow = today + timedelta(days=1)
         horizon = self.choose_horizon(based_on, tomorrow)
         valid_for = based_on + timedelta(days=horizon)
 
         def pred(base: str) -> float:
-            return float(preds[target_name(base, horizon)][i])
+            return float(self.predictions[target_name(base, horizon)][slug])
 
         frost_p = float(np.clip(pred("target_frost"), 0.0, 1.0))
         solar = pred("target_solar_kwh_m2")
@@ -243,7 +331,8 @@ class ForecastService:
 
     def available_horizons(self) -> list[int]:
         """Horizons with a served model for every target (old bundles: only 1)."""
-        return [h for h in HORIZONS if all(target_name(b, h) in self.models for b in TARGETS)]
+        served = self.predictions
+        return [h for h in HORIZONS if all(target_name(b, h) in served for b in TARGETS)]
 
     def choose_horizon(self, based_on: date, tomorrow: date) -> int:
         """Days ahead of ``based_on`` that land on tomorrow, within what is served."""

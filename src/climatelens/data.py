@@ -292,9 +292,6 @@ def validate(wide: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
     return df.reset_index(drop=True), report
 
 
-# --- Raw Parquet storage ----------------------------------------------------
-
-
 def _is_gcs(uri: str) -> bool:
     return uri.startswith("gs://")
 
@@ -378,6 +375,16 @@ def _to_parquet_bytes(frame: pd.DataFrame) -> bytes:
     buffer = io.BytesIO()
     frame.to_parquet(buffer, index=False)
     return buffer.getvalue()
+
+
+def read_json(uri: str) -> dict | None:
+    """A JSON document, or None if it does not exist."""
+    data = _read_bytes(uri)
+    return json.loads(data) if data else None
+
+
+def write_json(uri: str, document: dict) -> None:
+    _write_bytes(uri, json.dumps(document, separators=(",", ":"), default=str).encode())
 
 
 # --- Raw Parquet storage ----------------------------------------------------
