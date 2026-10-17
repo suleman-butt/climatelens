@@ -5,6 +5,11 @@ machine learning from German Weather Service (DWD) observations.**
 
 **Live:** [climatelens.sulemanb.com](https://climatelens.sulemanb.com)
 
+This project is maintained on GitLab, with a mirror kept on GitHub for
+visibility and easier discovery:
+[GitLab](https://gitlab.com/sulemanb/devops-cloud/climatelens) |
+[GitHub](https://github.com/suleman-butt/climatelens)
+
 ClimateLens was developed by Suleman Butt as part of the MSc DevOps & Cloud
 Computing programme at IU International University. It demonstrates how a
 machine-learning forecasting service can run reliably and fully automatically
