@@ -464,3 +464,23 @@ def test_about_reports_models_for_the_shown_horizon(bundle_dirs):
         service.manifest["models"][target] = {"model": "lightgbm"}
     assert service.about(horizon=2)["served_models"] == ["lightgbm"]
     assert "climatology" in service.about(horizon=3)["served_models"]
+
+
+def test_data_date_is_stated_once_and_older_cities_are_flagged(client, monkeypatch):
+    html = client.get("/", params={"city": ["berlin", "munich"]}).text
+    assert html.count("Based on DWD weather data up to") == 1
+    assert "Older data" not in html  # both cities share the newest date
+
+    service = service_cache._service
+    original = service.forecasts
+
+    def with_old_munich(today=None):
+        out = original(today)
+        for f in out:
+            if f["city"] == "munich":
+                f["based_on"] = "2023-05-10"
+        return out
+
+    monkeypatch.setattr(service, "forecasts", with_old_munich)
+    html = client.get("/", params={"city": ["berlin", "munich"]}).text
+    assert html.count("Older data: up to Wed 10 May 2023") == 1

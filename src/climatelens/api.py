@@ -231,6 +231,9 @@ def dashboard(
     by_city = {f["city"]: f for f in service.forecasts()}
     panels = [by_city[slug] for slug in selected if slug in by_city]
     shown_horizon = int(panels[0]["horizon_days"]) if panels else 1
+    # The newest data date shared by most selected cities is stated once; a city
+    # whose data is older (e.g. station outage) gets its own note.
+    data_date = max((p["based_on"] for p in panels), default=None)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -238,6 +241,7 @@ def dashboard(
             **context,
             "available": True,
             "panels": panels,
+            "data_date": data_date,
             # Accuracy and model facts for the horizon actually shown (usually 2 days).
             "accuracy": service.accuracy(horizon=shown_horizon),
             "about": service.about(horizon=shown_horizon),

@@ -90,7 +90,8 @@
     .panel + .panel { margin-top: 18px; }
     .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
     .panel-head h2 { margin: 0; font-size: 20px; }
-    .panel-head span { color: var(--muted); font-size: 13px; }
+    .panel-head .older { color: var(--warn-text); background: var(--warn-bg); border-radius: 6px; padding: 1px 8px; font-size: 12.5px; }
+    .data-date { margin: 0; color: var(--faint); font-size: 12.5px; text-align: right; }
     .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
     .card-top { display: flex; align-items: center; gap: 10px; }
@@ -151,6 +152,7 @@
       .city-opt { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
       .cards { grid-template-columns: 1fr; }
       .when { text-align: left; }
+      .data-date { text-align: left; }
       .how .intro, footer .footer-info { grid-template-columns: 1fr; }
       .header-right { flex-direction: column-reverse; align-items: flex-start; gap: 12px; width: 100%; }
     }
@@ -189,6 +191,7 @@
         <div><dt>Today</dt><dd>{{ today | nice_date }}</dd></div>
         <div class="forecast-day"><dt>Forecast for</dt><dd>{{ panels[0].valid_for | nice_date }}</dd></div>
       </dl>
+      {% if data_date %}<p class="data-date">Based on DWD weather data up to {{ data_date | nice_date }}</p>{% endif %}
       {% endif %}
     </div>
   </header>
@@ -229,7 +232,7 @@
       <section class="panel">
         <div class="panel-head">
           <h2>{{ f.name }}</h2>
-          <span>Based on weather data up to {{ f.based_on | nice_date }}</span>
+          {% if f.based_on != data_date %}<span class="older">Older data: up to {{ f.based_on | nice_date }}</span>{% endif %}
         </div>
         <div class="cards">
 

@@ -134,12 +134,12 @@ stays stateless.
 
 ### Releases
 
-The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.1.0). A
+The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.1.1). A
 release is a git tag `vX.Y.Z` plus an image with the same tag in Artifact
 Registry, where tags are immutable:
 
 ```bash
-make version         # 1.1.0
+make version         # 1.1.1
 make release-image   # build + push europe-west3-docker.pkg.dev/.../climatelens:v1.0.0
 ```
 
@@ -179,11 +179,9 @@ Regression models will report MAE and RMSE. Frost classification will report acc
 ## Cloud Deployment
 
 ClimateLens runs on Google Cloud in `europe-west3` (Frankfurt), project
-`climatelens-iu`:
+`climatelens-iu`.
 
-```text
-https://climatelens-rsd2eoklsa-ey.a.run.app
-```
+**Live dashboard:** [climatelens-273124305778.europe-west3.run.app](https://climatelens-273124305778.europe-west3.run.app)
 
 The planned custom address `https://climatelens.sulemanb.com` follows with the
 domain mapping (Cloudflare stays the authoritative DNS; Google manages the
@@ -198,6 +196,30 @@ certificate).
 | Daily ingest 15:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
 | GitLab CI to GCP without keys | Workload Identity Federation (pool `gitlab`) |
 | Cost guard | Billing budget alert, EUR 10/month, counting usage before credits |
+
+### Automation
+
+No manual step is needed to keep the forecasts current:
+
+| Job | Schedule (Europe/Berlin) | What it does |
+|---|---|---|
+| Daily ingest | every day, **15:30** | Fetches the newest DWD observations and rebuilds the feature table, so the dashboard forecasts tomorrow from the latest data |
+| Monthly retrain | 1st of the month, 11:00 | Walk-forward evaluation, refit of the best model per target and horizon, publishes a new model bundle |
+
+- **Why 15:30:** DWD publishes a day's observations during the following day
+  (observed between 07:30 and 12:46 UTC), so an afternoon run picks up
+  yesterday and the forecast for tomorrow is 2 days ahead of the data.
+- **Why monthly:** forecasts already use fresh data every day; one month adds
+  only ~3 % to ~3 years of training data, and the published accuracy is measured
+  with monthly retraining.
+- **Secured:** Cloud Scheduler calls the protected `/jobs/ingest` and
+  `/jobs/train` endpoints with a Google-signed OIDC token; the service checks
+  its signature, audience and the scheduler's service account.
+- **Self-healing:** a missed daily run is caught up by the next one (up to 60
+  days back), and every Cloud Run instance picks up new data or a new model
+  within a minute.
+
+### Infrastructure as code
 
 All of it is Terraform in [`infra/`](infra/):
 
