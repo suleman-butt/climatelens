@@ -184,11 +184,16 @@ Regression models will report MAE and RMSE. Frost classification will report acc
 ClimateLens runs on Google Cloud in `europe-west3` (Frankfurt), project
 `climatelens-iu`.
 
-**Live dashboard:** [climatelens-273124305778.europe-west3.run.app](https://climatelens-273124305778.europe-west3.run.app)
+**Live dashboard:** [climatelens.sulemanb.com](https://climatelens.sulemanb.com)
+(direct Cloud Run URL: [climatelens-273124305778.europe-west3.run.app](https://climatelens-273124305778.europe-west3.run.app))
 
-The planned custom address `https://climatelens.sulemanb.com` follows with the
-domain mapping (Cloudflare stays the authoritative DNS; Google manages the
-certificate).
+Cloud Run's built-in domain mapping is not offered in `europe-west3` (and is a
+preview feature Google does not recommend for production), so **Firebase
+Hosting** fronts the service: it forwards every request to Cloud Run, serves
+the Google-managed certificate for `climatelens.sulemanb.com`, and does not
+cache dynamic responses. Cloudflare stays the authoritative DNS with a
+DNS-only `CNAME climatelens -> climatelens-iu.web.app`. A load balancer would
+have cost more than the whole monthly budget.
 
 | Component | Service |
 |---|---|
@@ -196,6 +201,7 @@ certificate).
 | Raw data and feature table | Cloud Storage `climatelens-iu-data` |
 | Model bundles and `LATEST` pointer | Cloud Storage `climatelens-iu-models` |
 | Container images | Artifact Registry `climatelens` (keeps the 10 newest) |
+| Custom domain + HTTPS | Firebase Hosting (rewrite to Cloud Run, Google-managed certificate); Cloudflare DNS-only CNAME |
 | Daily ingest 15:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
 | GitLab CI to GCP without keys | Workload Identity Federation (pool `gitlab`) |
 | Cost guard | Billing budget alert, EUR 10/month, counting usage before credits |

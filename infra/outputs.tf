@@ -23,3 +23,13 @@ output "workload_identity_provider" {
   description = "Audience / provider for GitLab CI id_tokens (Phase 8)."
   value       = google_iam_workload_identity_pool_provider.gitlab.name
 }
+
+output "hosting_default_url" {
+  description = "Firebase Hosting URL (works before the custom domain is live)."
+  value       = "https://${google_firebase_hosting_site.site.site_id}.web.app"
+}
+
+output "custom_domain_dns_records" {
+  description = "Records to create at Cloudflare (DNS-only) for the custom domain."
+  value       = google_firebase_hosting_custom_domain.domain.required_dns_updates
+}

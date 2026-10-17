@@ -46,3 +46,9 @@ variable "train_schedule" {
   type        = string
   default     = "0 11 1 * *"
 }
+
+variable "custom_domain" {
+  description = "Public hostname served by Firebase Hosting in front of Cloud Run (DNS at Cloudflare, DNS-only)."
+  type        = string
+  default     = "climatelens.sulemanb.com"
+}

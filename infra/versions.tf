@@ -6,6 +6,11 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.0"
     }
+    # Firebase Hosting resources (custom domain in front of Cloud Run).
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.0"
+    }
   }
 
   # Created by infra/bootstrap. State is versioned, so a bad apply can be rolled back.
@@ -20,6 +25,13 @@ provider "google" {
   region  = var.region
   # With personal (ADC) credentials, APIs such as Billing Budgets need an
   # explicit quota project.
+  user_project_override = true
+  billing_project       = var.project_id
+}
+
+provider "google-beta" {
+  project               = var.project_id
+  region                = var.region
   user_project_override = true
   billing_project       = var.project_id
 }
