@@ -34,6 +34,8 @@ documented at [`/docs`](https://climatelens.sulemanb.com/docs).
 
 ## How it works
 
+![How ClimateLens works](diagrams/how-it-works.svg)
+
 1. **Collect** - every afternoon the service downloads the newest daily
    measurements (temperature, wind, humidity, pressure, cloud cover, rain,
    sunshine) from 18 DWD stations serving the 12 cities. The archive starts on
@@ -86,32 +88,9 @@ worse than the model it would replace.
 
 ## Cloud architecture
 
-```mermaid
-flowchart LR
-    user([Visitor]) -->|climatelens.sulemanb.com| dns[Cloudflare DNS<br/>DNS only]
-    dns --> fh[Firebase Hosting<br/>HTTPS, CDN cache 5 min]
-    fh --> run
+![ClimateLens cloud architecture](diagrams/architecture.svg)
 
-    subgraph gcp[Google Cloud - europe-west3]
-        run[Cloud Run<br/>climatelens<br/>FastAPI dashboard + API]
-        data[(Cloud Storage<br/>raw data, features,<br/>forecast snapshot)]
-        models[(Cloud Storage<br/>versioned model bundles)]
-        sched[Cloud Scheduler<br/>daily ingest 15:30<br/>monthly retrain<br/>keep-warm ping]
-        ar[(Artifact Registry<br/>immutable vX.Y.Z images)]
-        budget[Billing budget<br/>EUR 10 alert]
-    end
-
-    dwd[(DWD open data)] -->|daily observations| run
-    sched -->|OIDC-signed calls to /jobs| run
-    run <--> data
-    run <--> models
-
-    subgraph ci[GitLab CI/CD]
-        tag[git tag vX.Y.Z] --> pipe[lint, test, build,<br/>smoke test]
-    end
-    pipe -->|Workload Identity Federation<br/>no keys| ar
-    ar -->|deploy by digest| run
-```
+Editable diagram sources (Excalidraw) are in [`diagrams/`](diagrams/).
 
 Everything runs in `europe-west3` (Frankfurt), project `climatelens-iu`.
 Cloud Run scales to zero when idle. Pages stay fast because the daily and
