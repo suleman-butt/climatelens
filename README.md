@@ -59,8 +59,9 @@ API provides no city-level pollen data.
 ## Evaluation
 
 Models are evaluated with **expanding walk-forward validation**: train on all
-data before a month, test on that month, repeat (25 monthly folds,
-October 2024 - October 2026). Random train/test splits are not used, because
+data before a month, test on that month, repeat (22-25 monthly folds,
+October 2024 - October 2026; solar has fewer because DWD publishes radiation
+with a delay). Random train/test splits are not used, because
 they would leak future weather into training. Every model must beat simple
 baselines; where it does not, the baseline is served instead.
 
@@ -85,20 +86,31 @@ worse than the model it would replace.
 
 ## Cloud architecture
 
-```text
-              DWD open data
-                    |
-                    v
- Cloud Scheduler --(OIDC)--> Cloud Run: climatelens (FastAPI)
-   daily 15:30: ingest        |  ingest, features, training
-   monthly: retrain           |  forecasts, dashboard, API
-                              v
-                  Cloud Storage: raw data, features, model bundles
+```mermaid
+flowchart LR
+    user([Visitor]) -->|climatelens.sulemanb.com| dns[Cloudflare DNS<br/>DNS only]
+    dns --> fh[Firebase Hosting<br/>HTTPS, CDN cache 5 min]
+    fh --> run
 
- User --> climatelens.sulemanb.com --> Firebase Hosting --> Cloud Run
-           (Cloudflare DNS, DNS only)  (Google-managed HTTPS)
+    subgraph gcp[Google Cloud - europe-west3]
+        run[Cloud Run<br/>climatelens<br/>FastAPI dashboard + API]
+        data[(Cloud Storage<br/>raw data, features,<br/>forecast snapshot)]
+        models[(Cloud Storage<br/>versioned model bundles)]
+        sched[Cloud Scheduler<br/>daily ingest 15:30<br/>monthly retrain<br/>keep-warm ping]
+        ar[(Artifact Registry<br/>immutable vX.Y.Z images)]
+        budget[Billing budget<br/>EUR 10 alert]
+    end
 
- GitLab CI --(Workload Identity Federation)--> Artifact Registry + Cloud Run
+    dwd[(DWD open data)] -->|daily observations| run
+    sched -->|OIDC-signed calls to /jobs| run
+    run <--> data
+    run <--> models
+
+    subgraph ci[GitLab CI/CD]
+        tag[git tag vX.Y.Z] --> pipe[lint, test, build,<br/>smoke test]
+    end
+    pipe -->|Workload Identity Federation<br/>no keys| ar
+    ar -->|deploy by digest| run
 ```
 
 Everything runs in `europe-west3` (Frankfurt), project `climatelens-iu`.
@@ -135,8 +147,23 @@ created by hand.
 | **Billing** | Budget alert, EUR 10/month | Email alerts at 50 / 90 / 100 % and on forecast overspend |
 | **Service Usage** | 15 enabled APIs | Run, Artifact Registry, Scheduler, Storage, IAM, STS, Firebase, Billing, Logging, Monitoring, ... |
 
-Expected running cost: well under EUR 1/month (mostly image storage); all
-compute fits Google's free tiers.
+### Cost
+
+Measured over three days of normal operation (14-17 October 2026), compared
+with Google's monthly free allowances:
+
+| Item | Measured usage | Free allowance per month | Expected cost |
+|---|---|---|---|
+| Cloud Run | ~260 s billable instance time/day, ~130 requests/day (incl. a ~5 min retrain per month) | 180,000 vCPU-s, 360,000 GiB-s, 2 M requests | EUR 0 (under 10 % of the allowance) |
+| Cloud Scheduler | 3 jobs | 3 jobs per billing account | EUR 0 |
+| Cloud Storage | ~23 MB in three buckets | - | < EUR 0.01 |
+| Artifact Registry | ~1-1.5 GB (10 newest images, layers shared) | 0.5 GB | ~EUR 0.10-0.15 |
+| Firebase Hosting, Logging, Workload Identity | small | generous free tiers | EUR 0 |
+
+Expected total: **well under EUR 1 per month**, mostly image storage. A
+EUR 10 monthly budget alert (counting usage before credits) guards against
+surprises; it notifies, it does not cap spending. Actual charges are visible
+in the Google Cloud console under Billing > Reports.
 
 ---
 
@@ -189,6 +216,30 @@ Container: `make build`, then `make run` (dashboard on http://localhost:8080).
 Cloud: `infra/bootstrap` once, then `terraform apply` in `infra/`. Releases:
 bump the version in `src/climatelens/__init__.py`, commit, and run
 `make release`; GitLab CI deploys it.
+
+### Teardown
+
+At the end of the course the whole deployment can be removed without leftover
+costs:
+
+1. **Delete the project (complete, recommended):**
+   `gcloud projects delete climatelens-iu` stops all billing at once and removes
+   every resource listed above; Google keeps the project recoverable for 30
+   days.
+2. **Or keep the project and remove the resources:** empty the data and models
+   buckets including old versions
+   (`gcloud storage rm -r --all-versions gs://climatelens-iu-data/** gs://climatelens-iu-models/**`),
+   run `make destroy` (Terraform destroys the main configuration), then empty
+   the state bucket the same way and run `terraform destroy` in `infra/bootstrap`. The
+   Firebase project link and the Workload Identity pool are soft-deleted by
+   Google (pool IDs stay reserved for 30 days).
+3. **Outside Google Cloud:** delete the `climatelens` CNAME and the
+   `_acme-challenge.climatelens` TXT record at Cloudflare, and optionally the
+   protected `v*` tag rule in GitLab.
+
+The bootstrap configuration keeps its small state file locally (it is not in
+git). If it is lost, nothing breaks: the state bucket can be deleted by hand
+or re-imported with `terraform import`.
 
 ---
 
