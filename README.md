@@ -1,6 +1,6 @@
 # ClimateLens
 
-ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into next-day forecasts across three practical perspectives:
+ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into forecasts for tomorrow across three practical perspectives:
 
 - **Agriculture:** frost risk
 - **Solar energy:** sunshine energy reaching the ground
@@ -14,7 +14,7 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 
 - Daily ingestion of DWD weather-station data for 12 German cities
 - Feature engineering for temperature, wind, humidity, pressure, cloud cover, and calendar effects
-- Three next-day forecast targets: frost, solar, and wind
+- Three forecast targets for tomorrow: frost, solar, and wind (models 1, 2 and 3 days ahead of the latest data)
 - Walk-forward model evaluation against transparent baselines
 - REST API and server-rendered dashboard
 - Versioned raw data, features, models, and evaluation metrics
@@ -25,11 +25,17 @@ This project is being developed as an MSc DevOps & Cloud Computing university de
 
 | Target | Perspective | Type | Description |
 |---|---|---|---|
-| Frost | Agriculture | Classification | Probability that next-day minimum temperature is below 0 C |
-| Sunshine | Solar energy | Regression | Next-day global radiation (kWh/m2), from DWD SOLAR stations |
-| Wind | Outdoors | Regression | Next-day mean wind speed (m/s), shown as km/h and a Beaufort description |
+| Frost | Agriculture | Classification | Probability that tomorrow's minimum temperature is below 0 C |
+| Sunshine | Solar energy | Regression | Tomorrow's global radiation (kWh/m2), from DWD SOLAR stations |
+| Wind | Outdoors | Regression | Tomorrow's mean wind speed (m/s), shown as km/h and a Beaufort description |
 
-A fourth target, next-day pollen load (Health), was scoped out: the DWD
+**Why 1–3 days ahead:** DWD publishes each day's observations during the
+following day, so when the service forecasts *tomorrow* (in German time), the
+newest data is usually from yesterday. Models are trained for 1, 2 and 3 days
+ahead of the latest observation; the service picks the one that lands on
+tomorrow (normally 2), and each horizon is evaluated separately.
+
+A fourth target, pollen load (Health), was scoped out: the DWD
 observation API carries no pollen data, and the only alternative is DWD's
 separate coarse regional pollen-index archive.
 
@@ -128,12 +134,12 @@ stays stateless.
 
 ### Releases
 
-The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.0.0). A
+The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.1.0). A
 release is a git tag `vX.Y.Z` plus an image with the same tag in Artifact
 Registry, where tags are immutable:
 
 ```bash
-make version         # 1.0.0
+make version         # 1.1.0
 make release-image   # build + push europe-west3-docker.pkg.dev/.../climatelens:v1.0.0
 ```
 
@@ -146,8 +152,8 @@ and checks that it starts, serves `/healthz` and runs as the non-root user.
 | Method | Path | Access | Description |
 |---|---|---|---|
 | GET | `/` | public | Dashboard: frost, solar and wind cards for all cities |
-| GET | `/forecast` | public | Next-day forecasts for every city |
-| GET | `/forecast/{city}` | public | Next-day forecast for one city (slug, e.g. `berlin`) |
+| GET | `/forecast` | public | Forecasts for tomorrow for every city |
+| GET | `/forecast/{city}` | public | Forecast for tomorrow for one city (slug, e.g. `berlin`) |
 | GET | `/cities` | public | The 12 cities and their DWD stations |
 | GET | `/metrics` | public | Walk-forward scores of the served model vs baselines (`?per_city=true`) |
 | GET | `/health` | public | Liveness (`/healthz` also works locally; Cloud Run reserves it externally) |
@@ -189,7 +195,7 @@ certificate).
 | Raw data and feature table | Cloud Storage `climatelens-iu-data` |
 | Model bundles and `LATEST` pointer | Cloud Storage `climatelens-iu-models` |
 | Container images | Artifact Registry `climatelens` (keeps the 10 newest) |
-| Daily ingest 09:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
+| Daily ingest 15:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
 | GitLab CI to GCP without keys | Workload Identity Federation (pool `gitlab`) |
 | Cost guard | Billing budget alert, EUR 10/month, counting usage before credits |
 

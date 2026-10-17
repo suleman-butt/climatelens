@@ -32,9 +32,13 @@ variable "image" {
 }
 
 variable "ingest_schedule" {
-  description = "Cron (Europe/Berlin) for the daily DWD ingest + feature refresh."
+  description = <<-EOT
+    Cron (Europe/Berlin) for the daily DWD ingest + feature refresh. DWD
+    publishes a day's observations during the following day (seen between
+    07:30 and 12:46 UTC), so the run is in the afternoon to pick up yesterday.
+  EOT
   type        = string
-  default     = "30 9 * * *"
+  default     = "30 15 * * *"
 }
 
 variable "train_schedule" {

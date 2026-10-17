@@ -1,11 +1,16 @@
 """Feature engineering: raw daily observations -> one model-ready row per (city, day).
 
 Pure DataFrame code (no I/O). Row ``t`` holds features computed from data up to
-and including day ``t`` and the three targets observed on day ``t + 1``:
+and including day ``t`` and the three targets observed on day ``t + h`` for each
+horizon ``h`` in :data:`HORIZONS`:
 
-* ``target_frost``        - 1 if next-day ``temperature_air_min_2m`` < 0 C, else 0
-* ``target_solar_kwh_m2`` - next-day global radiation, J/cm2 -> kWh/m2
-* ``target_wind_speed``   - next-day mean wind speed (m/s)
+* ``target_frost``        - 1 if ``temperature_air_min_2m`` < 0 C, else 0
+* ``target_solar_kwh_m2`` - global radiation, J/cm2 -> kWh/m2
+* ``target_wind_speed``   - mean wind speed (m/s)
+
+The base names are the 1-day-ahead targets; ``<base>_h2`` and ``<base>_h3`` look
+2 and 3 days ahead. DWD publishes a day's observations the following day, so
+the latest data is 1-2 days old when the service forecasts *tomorrow*.
 
 Each city is re-indexed onto a full daily calendar before shifting or rolling,
 so a missing day becomes NaN instead of silently pairing ``t`` with ``t + 2``.
@@ -61,7 +66,29 @@ J_PER_CM2_PER_KWH_PER_M2 = 360.0
 
 FROST_THRESHOLD_C = 0.0
 
+#: Base (1-day-ahead) target names.
 TARGETS: tuple[str, ...] = ("target_frost", "target_solar_kwh_m2", "target_wind_speed")
+
+#: Days ahead of the latest observation that a model is trained for.
+HORIZONS: tuple[int, ...] = (1, 2, 3)
+
+
+def target_name(base: str, horizon: int) -> str:
+    """Column for ``base`` looking ``horizon`` days ahead (h=1 keeps the base name)."""
+    return base if horizon == 1 else f"{base}_h{horizon}"
+
+
+#: Every (target, horizon) column, e.g. target_frost, target_frost_h2, ...
+ALL_TARGETS: tuple[str, ...] = tuple(target_name(b, h) for b in TARGETS for h in HORIZONS)
+
+
+def split_target(name: str) -> tuple[str, int]:
+    """``target_frost_h2`` -> (``target_frost``, 2); base names are horizon 1."""
+    base, _, suffix = name.rpartition("_h")
+    if base in TARGETS and suffix.isdigit():
+        return base, int(suffix)
+    return name, 1
+
 
 #: Same-day values of each target quantity (day ``t``). Not model features: used
 #: only by the persistence baseline ("tomorrow equals today") in Phase 4.
@@ -138,10 +165,10 @@ def _city_features(group: pd.DataFrame, city: City) -> pd.DataFrame:
     radiation = raw["radiation_global"] if "radiation_global" in raw.columns else np.nan
     out["solar_kwh_m2"] = solar_j_cm2_to_kwh_m2(pd.Series(radiation, index=calendar))
 
-    # Next-day targets: value at t + 1 on the full calendar.
-    out["target_frost"] = out["frost"].shift(-1)
-    out["target_solar_kwh_m2"] = out["solar_kwh_m2"].shift(-1)
-    out["target_wind_speed"] = out["wind_speed"].shift(-1)
+    # Targets: the value h days later on the full calendar, for every horizon.
+    for base, current in CURRENT_VALUES.items():
+        for h in HORIZONS:
+            out[target_name(base, h)] = out[current].shift(-h)
 
     # Calendar days with no raw row at all carry no usable features.
     out = out.loc[out.index.isin(group.index)]
@@ -158,7 +185,7 @@ def build_features(raw: pd.DataFrame, cities: tuple[City, ...] = CITIES) -> pd.D
     :data:`TARGETS`. The last day of each city has NaN targets (tomorrow is
     unknown) - that row is the one used for live prediction.
     """
-    columns = [*ID_COLUMNS, *FEATURE_COLUMNS, *CURRENT_VALUES.values(), *TARGETS]
+    columns = [*ID_COLUMNS, *FEATURE_COLUMNS, *CURRENT_VALUES.values(), *ALL_TARGETS]
     columns = list(dict.fromkeys(columns))
     if raw.empty:
         return pd.DataFrame(columns=columns)
@@ -182,8 +209,8 @@ def build_features(raw: pd.DataFrame, cities: tuple[City, ...] = CITIES) -> pd.D
 
 def target_frame(features: pd.DataFrame, target: str) -> pd.DataFrame:
     """Rows usable for training/evaluating one target: target present, not imputed."""
-    if target not in TARGETS:
-        raise ValueError(f"unknown target {target!r}; expected one of {TARGETS}")
+    if target not in ALL_TARGETS:
+        raise ValueError(f"unknown target {target!r}; expected one of {ALL_TARGETS}")
     return features.loc[features[target].notna()].reset_index(drop=True)
 
 
@@ -224,7 +251,7 @@ def feature_report(features: pd.DataFrame) -> FeatureReport:
     nulls = features[list(FEATURE_COLUMNS)].isna().mean() * 100
     report.feature_null_pct = {k: round(float(v), 2) for k, v in nulls.items() if v > 0}
 
-    for target in TARGETS:
+    for target in ALL_TARGETS:
         present = features[target].notna()
         report.target_rows[target] = int(present.sum())
         by_city = present.groupby(features["city"]).mean() * 100

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -93,8 +93,11 @@ def test_forecast_all(client):
     assert "safety-critical decisions" in body["disclaimer"]
     assert [f["city"] for f in body["forecasts"]] == ["berlin", "munich"]  # config order
     f = body["forecasts"][0]
-    assert f["valid_for"] == "2023-05-16"  # day after the last observation
+    # Data ends 2023-05-15, years before "today": the furthest horizon is used
+    # and the forecast is flagged stale (its date is not tomorrow).
+    assert f["valid_for"] == "2023-05-18" and f["horizon_days"] == 3
     assert f["stale"] is True
+    assert f["issued_on"]
     assert 0.0 <= f["frost"]["probability"] <= 1.0
     assert f["frost"]["risk"] in {"low", "moderate", "high"}
     assert f["solar"]["vs_typical"] > 0
@@ -110,12 +113,49 @@ def test_forecast_city_and_unknown_city(client):
     assert client.get("/forecast/hamburg").status_code == 404  # known city, no data
 
 
-def test_forecast_is_fresh_when_data_is_recent(bundle_dirs):
+@pytest.mark.parametrize(
+    ("today", "horizon"),
+    [
+        ("2023-05-15", 1),  # same-day data (never happens with DWD, but valid)
+        ("2023-05-16", 2),  # latest data is yesterday: typical afternoon case
+        ("2023-05-17", 3),  # latest data is 2 days old: DWD not yet published
+    ],
+)
+def test_forecast_always_targets_tomorrow(bundle_dirs, today, horizon):
     settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
     service = ForecastService.load(settings)
-    berlin = service.forecast("berlin", today=date(2023, 5, 16))
-    assert berlin["data_age_days"] == 1
+    day = date.fromisoformat(today)
+    berlin = service.forecast("berlin", today=day)
+    assert berlin["issued_on"] == today
+    assert berlin["valid_for"] == (day + timedelta(days=1)).isoformat()
+    assert berlin["horizon_days"] == horizon
     assert berlin["stale"] is False
+
+
+def test_old_bundle_without_horizons_still_serves(bundle_dirs):
+    settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
+    service = ForecastService.load(settings)
+    service.models = {t: m for t, m in service.models.items() if "_h" not in t}
+    assert service.available_horizons() == [1]
+    berlin = service.forecast("berlin", today=date(2023, 5, 16))
+    assert berlin["horizon_days"] == 1
+    assert berlin["valid_for"] == "2023-05-16"
+    assert berlin["stale"] is True  # honest: this is not tomorrow's forecast
+
+
+def test_local_today_uses_german_time(monkeypatch):
+    from datetime import UTC, datetime
+
+    import climatelens.predict as predict
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # 23:30 UTC on 17 Oct is already 18 Oct in Berlin (UTC+2 in October).
+            return datetime(2026, 10, 17, 23, 30, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr(predict, "datetime", _Clock)
+    assert predict.local_today() == date(2026, 10, 18)
 
 
 def test_metrics_summary(client):
@@ -286,13 +326,13 @@ def test_dashboard_offers_light_dark_auto_theme(client):
 def test_dashboard_brand_and_how_it_works(client):
     html = client.get("/").text
     assert 'class="logo"' in html and 'rel="icon"' in html
-    assert "How ClimateLens works" in html
+    assert "About ClimateLens" in html and "How it works" in html
     for step in ("Collect", "Learn", "Forecast", "Stay up to date"):
         assert f"</span>{step}</h3>" in html
     assert "Developed by Suleman Butt" in html
     assert html.count("MSc DevOps &amp; Cloud Computing") == 1  # credited once, in the footer
     assert "IU International University" in html
-    assert "18 weather stations serving 12 cities" in html
+    assert "18 DWD weather stations serving 12 cities" in " ".join(html.split())
     # Real numbers from the bundle and feature table, not hard-coded text.
     assert "daily records" in html and "Last trained on" in html
 
@@ -301,10 +341,10 @@ def test_how_it_works_claims_follow_the_served_model(client, monkeypatch):
     html = client.get("/").text
     service = service_cache._service
     if service.about()["served_models"] == ["lightgbm"]:
-        assert "LightGBM" in html and "it beat" in html
-    monkeypatch.setattr(service, "about", lambda: {"served_models": ["persistence"]})
+        assert "LightGBM" in html and "beat simple rules" in html
+    monkeypatch.setattr(service, "about", lambda horizon=1: {"served_models": ["persistence"]})
     html = client.get("/").text
-    assert "LightGBM" not in html and "it beat" not in html
+    assert "LightGBM" not in html and "beat simple rules" not in html
     assert "the most accurate method was chosen" in html
 
 
@@ -405,3 +445,22 @@ def test_dashboard_template_is_clean_utf8():
     raw = (Path(climatelens.__file__).parent / "templates" / "dashboard.html").read_bytes()
     assert b"\x00" not in raw
     raw.decode("utf-8")
+
+
+def test_dashboard_shows_today_and_forecast_day(client):
+    from climatelens.predict import local_today
+
+    html = client.get("/").text
+    assert "<dt>Today</dt>" in html and "<dt>Forecast for</dt>" in html
+    assert local_today().strftime("%a %d %b %Y") in html
+
+
+def test_about_reports_models_for_the_shown_horizon(bundle_dirs):
+    settings = Settings(data_dir=bundle_dirs / "data", model_dir=bundle_dirs / "models")
+    service = ForecastService.load(settings)
+    for target in ("target_frost_h3", "target_wind_speed_h3"):
+        service.manifest["models"][target] = {"model": "climatology"}
+    for target in ("target_frost_h2", "target_solar_kwh_m2_h2", "target_wind_speed_h2"):
+        service.manifest["models"][target] = {"model": "lightgbm"}
+    assert service.about(horizon=2)["served_models"] == ["lightgbm"]
+    assert "climatology" in service.about(horizon=3)["served_models"]

@@ -203,7 +203,12 @@ def fetch_observations(
     pairs = pd.DataFrame(SOLAR_STATION_CITY_PAIRS, columns=["station_id", "city"])
     solar = solar.merge(pairs, on="station_id", how="inner")
 
-    long_df = pd.concat([climate, solar], ignore_index=True).dropna(subset=["city"])
+    # Recent days often have no solar rows yet (DWD lag); skip empty frames so
+    # pandas does not warn about all-NA columns in the concatenation.
+    parts = [frame for frame in (climate, solar) if not frame.empty]
+    long_df = (
+        pd.concat(parts, ignore_index=True).dropna(subset=["city"]) if parts else pd.DataFrame()
+    )
     if long_df.empty:
         log.warning(
             "dwd fetch returned no usable rows",

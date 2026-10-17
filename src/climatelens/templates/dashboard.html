@@ -54,14 +54,17 @@
     h1 { margin: 0; font-size: 24px; letter-spacing: -0.01em; line-height: 1.2; }
     .sub { margin: 10px 0 0; color: var(--muted); font-size: 14.5px; max-width: 620px; }
     .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-    .when { text-align: right; color: var(--muted); font-size: 13px; }
+    .when { margin: 0; display: flex; gap: 22px; text-align: right; }
+    .when div { display: flex; flex-direction: column; }
+    .when dt { color: var(--muted); font-size: 12.5px; }
+    .when dd { margin: 0; color: var(--muted); font-size: 15px; font-weight: 600; white-space: nowrap; }
+    .when .forecast-day dd { color: var(--text); font-size: 17px; font-weight: 700; }
     .theme { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 2px; }
     .theme[hidden] { display: none; }
     .theme button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
     .theme button:hover { color: var(--text); }
     .theme button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
     .theme svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .when strong { display: block; color: var(--text); font-size: 17px; white-space: nowrap; }
 
     /* Both columns end on the same line: the sidebar stretches to the panels' height. */
     .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: stretch; }
@@ -105,7 +108,10 @@
 
     .how { margin-top: 40px; }
     .how > h2 { margin: 0 0 4px; font-size: 19px; }
-    .how > p { margin: 0 0 16px; color: var(--muted); max-width: 820px; font-size: 14.5px; }
+    .how .intro { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 32px; margin-bottom: 18px; }
+    .how .intro p { margin: 0; color: var(--muted); font-size: 14.5px; }
+    .how .intro strong { color: var(--text); }
+    .how .steps-title { margin: 0 0 10px; font-size: 15px; }
     .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; list-style: none; margin: 0; padding: 0; }
     .step { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
     .step h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 15px; }
@@ -120,9 +126,12 @@
 
     footer { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
     footer h2 { margin: 0 0 4px; font-size: 13px; color: var(--text); }
-    footer p { margin: 0 0 12px; max-width: 860px; }
-    footer .credit { margin: 0 0 4px; color: var(--muted); font-weight: 600; }
-    footer .links { margin: 0; display: flex; flex-wrap: wrap; color: var(--faint); font-size: 12.5px; }
+    footer p { margin: 0; }
+    /* Full width: the two notes side by side, then a bar with credit and links. */
+    footer .footer-info { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 32px; }
+    footer .footer-bar { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 24px; }
+    footer .credit { color: var(--muted); font-weight: 600; }
+    footer .links { display: flex; flex-wrap: wrap; color: var(--faint); font-size: 12.5px; }
     /* Separator dots between items; a wrapped line starts without one. */
     footer .links span + span::before { content: "·"; margin: 0 8px; }
     footer a { color: inherit; }
@@ -142,7 +151,8 @@
       .city-opt { flex: none; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
       .cards { grid-template-columns: 1fr; }
       .when { text-align: left; }
-      .header-right { flex-direction: row-reverse; justify-content: space-between; align-items: end; width: 100%; }
+      .how .intro, footer .footer-info { grid-template-columns: 1fr; }
+      .header-right { flex-direction: column-reverse; align-items: flex-start; gap: 12px; width: 100%; }
     }
   </style>
 </head>
@@ -175,7 +185,10 @@
         </button>
       </div>
       {% if available and panels %}
-      <div class="when">Forecast for<strong>{{ panels[0].valid_for | nice_date }}</strong></div>
+      <dl class="when">
+        <div><dt>Today</dt><dd>{{ today | nice_date }}</dd></div>
+        <div class="forecast-day"><dt>Forecast for</dt><dd>{{ panels[0].valid_for | nice_date }}</dd></div>
+      </dl>
       {% endif %}
     </div>
   </header>
@@ -209,7 +222,7 @@
       {% else %}
 
       {% if any_stale %}
-      <div class="banner">The latest weather observations are delayed, so this forecast is for a past date. It will update once new data arrives.</div>
+      <div class="banner">The latest weather observations are delayed, so this forecast is for {{ panels[0].valid_for | nice_date }} instead of tomorrow. It will update once new data arrives.</div>
       {% endif %}
 
       {% for f in panels %}
@@ -274,16 +287,25 @@
   </div>
 
   <section class="how" aria-labelledby="how-title">
-    <h2 id="how-title">How ClimateLens works</h2>
-    <p>ClimateLens turns everyday weather measurements into a forecast for tomorrow. It shows how a
-      machine-learning service can run reliably and automatically, from data collection to the page
-      you are reading.</p>
+    <h2 id="how-title">About ClimateLens</h2>
+    <div class="intro">
+      <p>ClimateLens forecasts <strong>tomorrow's weather conditions</strong> for {{ cities | length }} of
+        Germany's largest cities from three everyday angles: the <strong>risk of frost</strong> for gardens
+        and farming, the <strong>sunshine energy</strong> available to solar panels, and <strong>how windy</strong>
+        it will be for time spent outdoors.</p>
+      <p>Instead of simulating the atmosphere like a national weather service, ClimateLens learns from
+        history. Years of daily measurements from the German Weather Service (DWD) teach a machine-learning
+        model how today's weather tends to turn into the weather of the next days. It is built as a modern
+        cloud service: data collection, retraining and publishing run automatically on Google Cloud, and every
+        forecast can be traced back to the data and the model version that produced it.</p>
+    </div>
+    <h3 class="steps-title">How it works</h3>
     <ol class="steps">
       <li class="step">
         <h3><span class="num">1</span>Collect</h3>
-        <p>Every day, ClimateLens downloads the latest measurements from the German Weather Service (DWD)
-          from {{ station_count }} weather stations serving {{ cities | length }} cities: temperature, wind,
-          humidity, air pressure, cloud cover, rain and sunshine.
+        <p>Every afternoon, ClimateLens downloads the newest measurements from {{ station_count }} DWD weather
+          stations serving {{ cities | length }} cities: temperature, wind, humidity, air pressure, cloud cover,
+          rain and sunshine.
           {% if about and about.records %}So far it holds <strong>{{ "{:,}".format(about.records) }} daily records</strong>
           covering <strong>{{ about.years }} years</strong> of weather, since {{ about.start | nice_date }}.{% endif %}</p>
       </li>
@@ -293,15 +315,16 @@
           <strong>LightGBM</strong> studies this history. It combines hundreds of small decision rules,
           each capturing a pattern such as &ldquo;a clear, calm evening after a cold day often brings frost&rdquo;.
           {% else %}A machine-learning method studies this history and learns how today's weather relates
-          to tomorrow's.{% endif %}</p>
+          to the weather of the next days.{% endif %}</p>
       </li>
       <li class="step">
         <h3><span class="num">3</span>Forecast</h3>
-        <p>For tomorrow, it looks at today's weather, the last few days and the time of year, and applies
-          the patterns it learned. Before use it was tested on past days it had never seen,
-          {% if about and about.served_models == ['lightgbm'] %}and it beat simple rules such as
+        <p>DWD publishes each day's measurements on the following day, so the newest data is usually from
+          yesterday. ClimateLens therefore looks two days ahead of it to reach <strong>tomorrow</strong>, using
+          the recent days and the time of year. Before use, every forecast was tested on past days it had never seen
+          {%- if about and about.served_models == ['lightgbm'] %} and beat simple rules such as
           &ldquo;tomorrow will be like today&rdquo; and &ldquo;the usual weather for this time of year&rdquo;.
-          {%- else %}and the most accurate method was chosen.{% endif %}</p>
+          {%- else %}, and the most accurate method was chosen.{% endif %}</p>
       </li>
       <li class="step">
         <h3><span class="num">4</span>Stay up to date</h3>
@@ -313,22 +336,30 @@
   </section>
 
   <footer>
-    {% if available and accuracy and accuracy.frost_accuracy is not none %}
-    <h2>How reliable is this?</h2>
-    <p>When tested on past weather, the frost forecast was right on
-      {{ '%.0f' % (accuracy.frost_accuracy * 100) }}% of days, sunshine energy was typically within
-      &plusmn;{{ '%.1f' % accuracy.solar_mae }} kWh/m&sup2;, and wind speed within
-      &plusmn;{{ '%.0f' % (accuracy.wind_mae * 3.6) }} km/h.</p>
-    {% endif %}
-    <h2>About these forecasts</h2>
-    <p>{{ disclaimer }}</p>
-    <p class="credit">Developed by Suleman Butt &middot; MSc DevOps &amp; Cloud Computing, IU International University</p>
-    <p class="links">
-      <span>Data: Deutscher Wetterdienst (DWD) open data</span>
-      <span><a href="/docs">API Documentation</a></span>
-      <span>App v{{ app_version }}</span>
-      {% if version %}<span title="Trained {{ version[:4] }}-{{ version[4:6] }}-{{ version[6:8] }} {{ version[9:11] }}:{{ version[11:13] }} UTC; changes after each retrain">Model {{ version }}</span>{% endif %}
-    </p>
+    <div class="footer-info">
+      {% if available and accuracy and accuracy.frost_accuracy is not none %}
+      <section>
+        <h2>How reliable is this?</h2>
+        <p>When tested on past weather at the same distance ahead as today's forecast, the frost forecast
+          was right on {{ '%.0f' % (accuracy.frost_accuracy * 100) }}% of days, sunshine energy was typically
+          within &plusmn;{{ '%.1f' % accuracy.solar_mae }} kWh/m&sup2;, and wind speed within
+          &plusmn;{{ '%.0f' % (accuracy.wind_mae * 3.6) }} km/h.</p>
+      </section>
+      {% endif %}
+      <section>
+        <h2>About these forecasts</h2>
+        <p>{{ disclaimer }}</p>
+      </section>
+    </div>
+    <div class="footer-bar">
+      <p class="credit">Developed by Suleman Butt &middot; MSc DevOps &amp; Cloud Computing, IU International University</p>
+      <p class="links">
+        <span>Data: Deutscher Wetterdienst (DWD) open data</span>
+        <span><a href="/docs">API Documentation</a></span>
+        <span>App v{{ app_version }}</span>
+        {% if version %}<span title="Trained {{ version[:4] }}-{{ version[4:6] }}-{{ version[6:8] }} {{ version[9:11] }}:{{ version[11:13] }} UTC; changes after each retrain">Model {{ version }}</span>{% endif %}
+      </p>
+    </div>
   </footer>
 </div>
 

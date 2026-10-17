@@ -1,16 +1,19 @@
-"""Next-day forecasts from the served model bundle and the latest feature rows.
+"""Forecasts for tomorrow from the served model bundle and the latest feature rows.
 
-The forecast for city ``c`` is issued from its most recent feature row (day
-``t``, the last day with observations) and is valid for ``t + 1``. When the
-data is older than :data:`STALE_AFTER_DAYS` the forecast is still returned but
-flagged ``stale`` - the forecast date is then in the past.
+"Today" is the calendar date in Germany (:data:`LOCAL_TZ`). DWD publishes a
+day's observations the following day, so a city's newest feature row (day
+``t``) is usually 1-2 days old. The forecast always targets *tomorrow*, using
+the model whose horizon ``h`` satisfies ``t + h == tomorrow``. If the data is
+older than the longest horizon allows, the furthest horizon is used and the
+forecast is flagged ``stale`` (its date is then before tomorrow).
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -18,13 +21,18 @@ import pandas as pd
 from climatelens.config import CITIES_BY_SLUG, Settings, get_logger
 from climatelens.data import read_features, read_model_bundle
 from climatelens.evaluate import FROST_DECISION_THRESHOLD
-from climatelens.features import latest_rows
+from climatelens.features import HORIZONS, TARGETS, latest_rows, split_target, target_name
 from climatelens.models import is_classification
 
 log = get_logger(__name__)
 
-#: Observations older than this (days before today) mark a forecast as stale.
-STALE_AFTER_DAYS = 3
+#: The service's notion of "today" and "tomorrow": the date in Germany.
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+
+def local_today() -> date:
+    return datetime.now(LOCAL_TZ).date()
+
 
 #: Frost probability bands for the plain-language risk level.
 FROST_RISK_BANDS: tuple[tuple[float, str], ...] = ((0.5, "high"), (0.2, "moderate"), (0.0, "low"))
@@ -134,7 +142,7 @@ class ForecastService:
 
     def forecasts(self, today: date | None = None) -> list[dict[str, object]]:
         """One forecast per city, in the order of ``config.CITIES``."""
-        today = today or datetime.now(UTC).date()
+        today = today or local_today()
         rows = self.latest.reset_index(drop=True)
         preds = {target: model.predict(rows) for target, model in self.models.items()}
         out = [self._city_forecast(rows, i, preds, today) for i in range(len(rows))]
@@ -151,13 +159,18 @@ class ForecastService:
         city = CITIES_BY_SLUG[slug]
         based_on = pd.Timestamp(rows.loc[i, "date"]).date()
         age = (today - based_on).days
+        tomorrow = today + timedelta(days=1)
+        horizon = self.choose_horizon(based_on, tomorrow)
+        valid_for = based_on + timedelta(days=horizon)
 
-        frost_p = float(np.clip(preds["target_frost"][i], 0.0, 1.0))
-        solar = preds["target_solar_kwh_m2"][i]
-        wind = float(preds["target_wind_speed"][i])
+        def pred(base: str) -> float:
+            return float(preds[target_name(base, horizon)][i])
+
+        frost_p = float(np.clip(pred("target_frost"), 0.0, 1.0))
+        solar = pred("target_solar_kwh_m2")
+        wind = pred("target_wind_speed")
         wind_kmh = round(wind * 3.6)
         force, wind_description = beaufort(wind_kmh)
-        valid_for = based_on + timedelta(days=1)
         typical_sun = self.typical_solar.get((slug, valid_for.month))
         vs_typical = _num(solar / typical_sun, 2) if typical_sun else None
         return {
@@ -173,10 +186,12 @@ class ForecastService:
                 "name": city.solar_station_name,
                 "distance_km": city.solar_distance_km,
             },
+            "issued_on": today.isoformat(),
             "based_on": based_on.isoformat(),
             "valid_for": valid_for.isoformat(),
+            "horizon_days": horizon,
             "data_age_days": age,
-            "stale": age > STALE_AFTER_DAYS,
+            "stale": valid_for != tomorrow,
             "frost": {
                 "probability": round(frost_p, 3),
                 "expected": frost_p >= FROST_DECISION_THRESHOLD,
@@ -201,10 +216,13 @@ class ForecastService:
         """Served model vs its baselines, per target (from the bundle's metrics.json)."""
         targets: dict[str, object] = {}
         for target, ev in self.metrics.items():
-            metric, reference = SKILL_REFERENCE[target]
+            base, horizon = split_target(target)
+            metric, reference = SKILL_REFERENCE[base]
             served = self.manifest["models"][target]["model"]  # type: ignore[index]
             overall = ev["overall"]
             entry: dict[str, object] = {
+                "target": base,
+                "horizon_days": horizon,
                 "served_model": served,
                 "type": "classification" if is_classification(target) else "regression",
                 "primary_metric": metric,
@@ -223,17 +241,31 @@ class ForecastService:
             targets[target] = entry
         return {"model_version": self.version, "targets": targets}
 
-    def accuracy(self, slug: str | None = None) -> dict[str, float | None]:
+    def available_horizons(self) -> list[int]:
+        """Horizons with a served model for every target (old bundles: only 1)."""
+        return [h for h in HORIZONS if all(target_name(b, h) in self.models for b in TARGETS)]
+
+    def choose_horizon(self, based_on: date, tomorrow: date) -> int:
+        """Days ahead of ``based_on`` that land on tomorrow, within what is served."""
+        available = self.available_horizons() or [1]
+        wanted = (tomorrow - based_on).days
+        return min(max(wanted, available[0]), available[-1])
+
+    def accuracy(self, slug: str | None = None, horizon: int = 1) -> dict[str, float | None]:
         """Plain accuracy figures for the served models (walk-forward).
 
-        For one city when ``slug`` is given, otherwise across all cities.
+        For one city when ``slug`` is given, otherwise across all cities; for
+        the given forecast horizon (falls back to 1 day if it is not served).
         """
         out: dict[str, float | None] = {}
-        for target, key, metric in (
+        for base, key, metric in (
             ("target_frost", "frost_accuracy", "accuracy"),
             ("target_solar_kwh_m2", "solar_mae", "mae"),
             ("target_wind_speed", "wind_mae", "mae"),
         ):
+            target = target_name(base, horizon)
+            if target not in self.metrics:
+                target = base
             ev = self.metrics.get(target, {})
             served = self.manifest["models"][target]["model"]  # type: ignore[index]
             by_model = ev.get("overall", {})
@@ -243,10 +275,15 @@ class ForecastService:
             out[key] = scores.get(metric)
         return out
 
-    def about(self) -> dict[str, object]:
-        """Plain facts about the data and the served models for the dashboard."""
+    def about(self, horizon: int = 1) -> dict[str, object]:
+        """Plain facts about the data and the served models for the dashboard.
+
+        ``served_models`` covers the targets at ``horizon`` - the forecast the
+        page is actually showing.
+        """
         models = self.manifest.get("models", {})
-        served = sorted({str(m.get("model", "")) for m in models.values()})  # type: ignore[union-attr]
+        shown = [models.get(target_name(b, horizon)) or models.get(b, {}) for b in TARGETS]
+        served = sorted({str(m.get("model", "")) for m in shown if m})  # type: ignore[union-attr]
         train_ends = [str(m.get("train_end", "")) for m in models.values()]  # type: ignore[union-attr]
         created = str(self.manifest.get("created_at", ""))
         return {

@@ -28,7 +28,7 @@ from climatelens.pipeline import (
     run_incremental_ingest,
     run_train,
 )
-from climatelens.predict import ForecastService, ForecastUnavailable
+from climatelens.predict import ForecastService, ForecastUnavailable, local_today
 
 log = get_logger(__name__)
 
@@ -211,6 +211,7 @@ def dashboard(
 ) -> HTMLResponse:
     selected = selected_cities(city)
     context: dict[str, object] = {
+        "today": local_today().isoformat(),
         "cities": CITIES,
         "station_count": len({c.station_id for c in CITIES} | {c.solar_station_id for c in CITIES}),
         "selected": selected,
@@ -229,6 +230,7 @@ def dashboard(
         )
     by_city = {f["city"]: f for f in service.forecasts()}
     panels = [by_city[slug] for slug in selected if slug in by_city]
+    shown_horizon = int(panels[0]["horizon_days"]) if panels else 1
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -236,8 +238,9 @@ def dashboard(
             **context,
             "available": True,
             "panels": panels,
-            "accuracy": service.accuracy(),
-            "about": service.about(),
+            # Accuracy and model facts for the horizon actually shown (usually 2 days).
+            "accuracy": service.accuracy(horizon=shown_horizon),
+            "about": service.about(horizon=shown_horizon),
             "version": service.version,
             "any_stale": any(p["stale"] for p in panels),
         },

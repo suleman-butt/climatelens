@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from climatelens.config import get_logger
-from climatelens.features import TARGETS, target_frame
+from climatelens.features import ALL_TARGETS, target_frame
 from climatelens.models import Model, candidate_models, is_classification, make_model
 
 log = get_logger(__name__)
@@ -195,7 +195,7 @@ def summarise(predictions: pd.DataFrame, target: str) -> TargetEvaluation:
 
 def evaluate_all(
     features: pd.DataFrame,
-    targets: tuple[str, ...] = TARGETS,
+    targets: tuple[str, ...] = ALL_TARGETS,
     min_train_days: int = MIN_TRAIN_DAYS,
 ) -> dict[str, TargetEvaluation]:
     """Walk-forward evaluation of every candidate model for each target."""

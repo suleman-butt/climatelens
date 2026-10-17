@@ -20,7 +20,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from climatelens.features import CURRENT_VALUES, FEATURE_COLUMNS, TARGETS
+from climatelens.features import ALL_TARGETS, CURRENT_VALUES, FEATURE_COLUMNS, split_target
 
 CLASSIFICATION_TARGETS: tuple[str, ...] = ("target_frost",)
 REGRESSION_TARGETS: tuple[str, ...] = ("target_solar_kwh_m2", "target_wind_speed")
@@ -55,13 +55,13 @@ class Model(Protocol):
 
 
 def _check_target(target: str) -> None:
-    if target not in TARGETS:
-        raise ValueError(f"unknown target {target!r}; expected one of {TARGETS}")
+    if target not in ALL_TARGETS:
+        raise ValueError(f"unknown target {target!r}; expected one of {ALL_TARGETS}")
 
 
 def is_classification(target: str) -> bool:
     _check_target(target)
-    return target in CLASSIFICATION_TARGETS
+    return split_target(target)[0] in CLASSIFICATION_TARGETS
 
 
 def _day_of_year(dates: pd.Series) -> np.ndarray:
@@ -80,6 +80,7 @@ class Climatology:
     def __init__(self, target: str, window_days: int = CLIMATOLOGY_WINDOW_DAYS) -> None:
         _check_target(target)
         self.target = target
+        self.horizon = split_target(target)[1]
         self.window_days = window_days
         self.table_: dict[str, np.ndarray] = {}
         self.city_mean_: dict[str, float] = {}
@@ -87,7 +88,7 @@ class Climatology:
 
     def fit(self, train: pd.DataFrame) -> Climatology:
         rows = train.loc[train[self.target].notna()]
-        doy = _day_of_year(rows["date"])
+        doy = _day_of_year(self._target_dates(rows))
         self.table_, self.city_mean_ = {}, {}
         self.global_mean_ = float(rows[self.target].mean())
         offsets = np.arange(-self.window_days, self.window_days + 1)
@@ -105,8 +106,12 @@ class Climatology:
             self.table_[str(city)] = table
         return self
 
+    def _target_dates(self, frame: pd.DataFrame) -> pd.Series:
+        # Row t's target is observed on t + horizon: use that day's season.
+        return pd.to_datetime(frame["date"]) + pd.Timedelta(self.horizon, unit="D")
+
     def predict(self, frame: pd.DataFrame) -> np.ndarray:
-        doy = _day_of_year(frame["date"]) - 1
+        doy = _day_of_year(self._target_dates(frame)) - 1
         out = np.full(len(frame), np.nan)
         cities = frame["city"].astype(str).to_numpy()
         for city in np.unique(cities):
@@ -120,14 +125,14 @@ class Climatology:
 
 
 class Persistence:
-    """Tomorrow equals today; climatology fills days with no same-day value."""
+    """Target day equals today (any horizon); climatology fills missing days."""
 
     name = "persistence"
 
     def __init__(self, target: str) -> None:
         _check_target(target)
         self.target = target
-        self.current = CURRENT_VALUES[target]
+        self.current = CURRENT_VALUES[split_target(target)[0]]
         self.fallback_ = Climatology(target)
 
     def fit(self, train: pd.DataFrame) -> Persistence:
