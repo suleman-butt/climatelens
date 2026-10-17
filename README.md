@@ -139,7 +139,11 @@ with Google's monthly free allowances:
 | Artifact Registry | ~1-1.5 GB (10 newest images, layers shared) | 0.5 GB | ~EUR 0.10-0.15 |
 | Firebase Hosting, Logging, Workload Identity | small | generous free tiers | EUR 0 |
 
-Expected total: **well under EUR 1 per month**, mostly image storage. A
+**Actual cost, 1-17 October 2026 (Google Cloud Billing): EUR 0.00** - Cloud
+Run used EUR 0.02, fully covered by the free tier; Cloud Storage, Cloud
+Scheduler, Cloud Logging and Artifact Registry EUR 0.00 each.
+
+Expected steady state: **well under EUR 1 per month**, mostly image storage. A
 EUR 10 monthly budget alert (counting usage before credits) guards against
 surprises; it notifies, it does not cap spending. Actual charges are visible
 in the Google Cloud console under Billing > Reports.
