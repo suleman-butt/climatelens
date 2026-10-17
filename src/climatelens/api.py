@@ -21,7 +21,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from climatelens import __version__
-from climatelens.config import CITIES, CITIES_BY_SLUG, Settings, get_logger, get_settings
+from climatelens.config import (
+    CITIES,
+    CITIES_BY_SLUG,
+    Settings,
+    configure_logging,
+    get_logger,
+    get_settings,
+)
 from climatelens.data import fingerprint, latest_model_version
 from climatelens.pipeline import (
     PipelineError,
@@ -61,6 +68,9 @@ def _preload() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Same single-line JSON logs as the CLI, so Cloud Logging receives the
+    # service's INFO messages (snapshot loads, jobs, ingest results).
+    configure_logging()
     threading.Thread(target=_preload, name="preload", daemon=True).start()
     yield
 

@@ -145,7 +145,7 @@ compute fits Google's free tiers.
 - **Infrastructure as code:** two-stage Terraform - a small bootstrap creates
   the state bucket, the main configuration everything else. The budget alert
   is created before any billable service.
-- **CI/CD (GitLab):** every code change runs lint, tests (98 automated tests)
+- **CI/CD (GitLab):** every code change runs lint, tests (99 automated tests)
   and a container build with smoke test. A release is a protected git tag
   `vX.Y.Z`: the pipeline checks the tag against the code version, builds and
   tests the image, pushes it with an immutable tag and deploys exactly that

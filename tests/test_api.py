@@ -565,3 +565,17 @@ def test_health_errors_and_jobs_are_never_cached(client, empty_client):
     assert empty_client.get("/forecast").headers["cache-control"] == "no-store"  # 503
     assert client.get("/forecast/atlantis").headers["cache-control"] == "no-store"  # 404
     assert client.post("/jobs/train").headers["cache-control"] == "no-store"  # 401
+
+
+def test_server_startup_configures_json_logging(monkeypatch):
+    import logging
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    monkeypatch.setattr(api, "_preload", lambda: None)
+    try:
+        with TestClient(app):  # runs the lifespan startup, like uvicorn does
+            assert any(getattr(h, "_climatelens", False) for h in root.handlers)
+            assert root.level <= logging.INFO
+    finally:
+        root.handlers, root.level = saved_handlers, saved_level
