@@ -33,8 +33,6 @@ models/
 Thumbs.db
 .vscode/
 
-# Internal project docs: decisions, logs and todo stay local (not pushed)
-docs/
 
 # Local Claude Code settings
 .claude/

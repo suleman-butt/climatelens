@@ -245,6 +245,19 @@ or re-imported with `terraform import`.
 
 ---
 
+## Documentation
+
+- [Decision log](docs/decisions.md) - every significant design decision with
+  the alternatives considered and the reasoning
+- [Project log](docs/project-log.md) - how the system was built, phase by
+  phase, with measurements and the problems solved along the way
+- [Evaluation results](docs/evaluation-results.md) - walk-forward scores by
+  forecast horizon and per city
+- [Changelog](CHANGELOG.md) - what changed in each release
+- [Diagrams](diagrams/) - editable Excalidraw sources of the figures above
+
+---
+
 ## Responsible use
 
 ClimateLens is a technical demonstrator for educational and research
