@@ -1,260 +1,213 @@
 # ClimateLens
 
-ClimateLens is a cloud-native weather forecasting service for selected German cities. It turns daily German Weather Service (DWD) observations into forecasts for tomorrow across three practical perspectives:
+**Tomorrow's frost risk, sunshine and wind for 12 German cities - forecast by
+machine learning from German Weather Service (DWD) observations.**
 
-- **Agriculture:** frost risk
-- **Solar energy:** sunshine energy reaching the ground
-- **Outdoors:** how windy the day will be
+**Live:** [climatelens.sulemanb.com](https://climatelens.sulemanb.com)
 
-This project is being developed as an MSc DevOps & Cloud Computing university deliverable. The main focus is a reproducible cloud architecture, automated delivery, and responsible use of machine-learning forecasts.
+ClimateLens was developed by Suleman Butt as part of the MSc DevOps & Cloud
+Computing programme at IU International University. It demonstrates how a
+machine-learning forecasting service can run reliably and fully automatically
+in the cloud: data collection, retraining and releases need no manual step,
+and every forecast can be traced back to the data and model version behind it.
 
-> **Project status:** Live on Google Cloud Run, with Terraform-managed infrastructure and scheduled daily ingest and monthly retraining. Automated deployment from GitLab CI and the custom domain are next.
+---
 
-## Planned Features
+## What ClimateLens forecasts
 
-- Daily ingestion of DWD weather-station data for 12 German cities
-- Feature engineering for temperature, wind, humidity, pressure, cloud cover, and calendar effects
-- Three forecast targets for tomorrow: frost, solar, and wind (models 1, 2 and 3 days ahead of the latest data)
-- Walk-forward model evaluation against transparent baselines
-- REST API and server-rendered dashboard
-- Versioned raw data, features, models, and evaluation metrics
-- Infrastructure managed with Terraform
-- Automated application delivery through GitLab CI/CD and Google Cloud Workload Identity Federation
+| Forecast | For whom | What you see |
+|---|---|---|
+| **Frost** | Gardens & farming | *Frost unlikely / possible / likely*, with the chance that tomorrow's minimum temperature drops below 0 °C |
+| **Sunshine** | Solar energy | *Sunnier than usual / About usual / Duller than usual* for the month, with the expected solar energy in kWh/m² |
+| **Wind** | Outdoors | A Beaufort description (e.g. *Gentle breeze*) with the average wind speed in km/h |
 
-## Forecast Targets
+Cities: Berlin, Hamburg, Munich, Cologne, Frankfurt am Main, Stuttgart, Essen,
+Leipzig, Bremen, Dresden, Hannover and Nuremberg.
 
-| Target | Perspective | Type | Description |
-|---|---|---|---|
-| Frost | Agriculture | Classification | Probability that tomorrow's minimum temperature is below 0 C |
-| Sunshine | Solar energy | Regression | Tomorrow's global radiation (kWh/m2), from DWD SOLAR stations |
-| Wind | Outdoors | Regression | Tomorrow's mean wind speed (m/s), shown as km/h and a Beaufort description |
+**Using the dashboard:** pick up to three cities in the sidebar to compare them
+side by side; the selection is part of the address, so a comparison can be
+bookmarked. The header shows today's date and the date being forecast, and a
+Light / Dark / Auto switch sets the colour theme. A machine-readable API is
+documented at [`/docs`](https://climatelens.sulemanb.com/docs).
 
-**Why 1–3 days ahead:** DWD publishes each day's observations during the
-following day, so when the service forecasts *tomorrow* (in German time), the
-newest data is usually from yesterday. Models are trained for 1, 2 and 3 days
-ahead of the latest observation; the service picks the one that lands on
-tomorrow (normally 2), and each horizon is evaluated separately.
+---
 
-A fourth target, pollen load (Health), was scoped out: the DWD
-observation API carries no pollen data, and the only alternative is DWD's
-separate coarse regional pollen-index archive.
+## How it works
 
-## Architecture
+1. **Collect** - every afternoon the service downloads the newest daily
+   measurements (temperature, wind, humidity, pressure, cloud cover, rain,
+   sunshine) from 18 DWD stations serving the 12 cities. The archive starts on
+   5 September 2023 (about 13,600 daily records, 3+ years).
+2. **Learn** - a gradient-boosted decision-tree model (**LightGBM**) learns how
+   today's weather, the last few days and the time of year relate to the
+   coming days. 42 features are built per city and day, using only data up to
+   that day (no look-ahead).
+3. **Forecast tomorrow** - DWD publishes each day's measurements on the
+   following day, so the newest data is usually from yesterday. Models are
+   therefore trained for **1, 2 and 3 days ahead** of the latest observation,
+   and the service uses the one that lands on tomorrow (German time) -
+   normally 2 days ahead.
+4. **Stay up to date** - the forecast is refreshed daily; once a month the
+   models are retrained on all data and the most accurate method per target is
+   kept.
+
+Pollen (a health perspective) was considered and dropped: the DWD observation
+API provides no city-level pollen data.
+
+---
+
+## Evaluation
+
+Models are evaluated with **expanding walk-forward validation**: train on all
+data before a month, test on that month, repeat (25 monthly folds,
+October 2024 - October 2026). Random train/test splits are not used, because
+they would leak future weather into training. Every model must beat simple
+baselines; where it does not, the baseline is served instead.
+
+| Forecast | Metric | 1 day ahead | **2 days ahead** (used for tomorrow) | 3 days ahead |
+|---|---|---|---|---|
+| Frost | Brier score (lower is better) | 0.056 | **0.102** | 0.114 |
+| | Skill vs seasonal average | +51 % | **+11 %** | 0 % (seasonal average served) |
+| | Accuracy | 92 % | **86 %** | 84 % |
+| Sunshine | MAE, kWh/m² | 0.84 | **0.96** | 1.02 |
+| | Skill vs "same as today" | +10.5 % | **+13.6 %** | +15.0 % |
+| Wind | MAE, m/s | 0.83 | **0.97** | 1.00 |
+| | Skill vs "same as today" | +9.9 % | **+13.5 %** | +15.1 % (seasonal average served) |
+
+Baselines: *persistence* (the target day equals today), *climatology*
+(smoothed historical average for the city and day of year) and, for frost,
+*majority class* (always "no frost"). Live scores of the served model are
+available at [`/metrics`](https://climatelens.sulemanb.com/metrics). A
+quality gate publishes a retrained model only if no forecast is more than 5 %
+worse than the model it would replace.
+
+---
+
+## Cloud architecture
 
 ```text
-DWD weather observations
-          |
-          v
-Validation and immutable raw storage
-          |
-          v
-Feature engineering, Parquet feature table in Cloud Storage
-          |
-          v
-Walk-forward training and evaluation
-          |
-          v
-Versioned model artifacts in Cloud Storage
-          |
-          v
-FastAPI service on Cloud Run
-          |
-          v
-REST API and server-rendered dashboard
+              DWD open data
+                    |
+                    v
+ Cloud Scheduler --(OIDC)--> Cloud Run: climatelens (FastAPI)
+   daily 15:30: ingest        |  ingest, features, training
+   monthly: retrain           |  forecasts, dashboard, API
+                              v
+                  Cloud Storage: raw data, features, model bundles
+
+ User --> climatelens.sulemanb.com --> Firebase Hosting --> Cloud Run
+           (Cloudflare DNS, DNS only)  (Google-managed HTTPS)
+
+ GitLab CI --(Workload Identity Federation)--> Artifact Registry + Cloud Run
 ```
 
-One Cloud Run service serves the dashboard and API and runs the protected ingestion and training endpoints, which Cloud Scheduler calls daily (ingest) and monthly (retrain). The workloads can be split into Cloud Run Jobs if they outgrow a request.
+Everything runs in `europe-west3` (Frankfurt), project `climatelens-iu`.
+Cloud Run scales to zero when idle. Firebase Hosting fronts the service
+because Cloud Run's own domain mapping is not available in this region; a
+load balancer would have cost more than the whole monthly budget.
 
-## Technology Stack
+### Google Cloud resources
 
-- **Language:** Python 3.12
-- **API:** FastAPI and Uvicorn
-- **Data processing:** pandas and PyArrow
-- **Machine learning:** scikit-learn and LightGBM
-- **Weather data:** `wetterdienst` and DWD open data
-- **Storage:** Google Cloud Storage (raw partitions, feature table, model bundles)
-- **Compute:** Google Cloud Run
-- **Scheduling:** Google Cloud Scheduler
-- **Infrastructure:** Terraform
-- **CI/CD:** GitLab CI/CD with Workload Identity Federation (GitLab OIDC)
-- **DNS:** Cloudflare for `sulemanb.com`
+All 40 resources are defined in Terraform ([`infra/`](infra/)); none were
+created by hand.
 
-## Repository Structure
+| Service | Resource | Purpose |
+|---|---|---|
+| **Cloud Run** | Service `climatelens` | Dashboard, API and the protected job endpoints; scales to zero (1 vCPU, 2 GiB) |
+| | Public invoker binding | Makes the dashboard and read-only API public |
+| **Cloud Storage** | Bucket `climatelens-iu-data` | Raw daily DWD partitions and the feature table (versioned, lifecycle rules) |
+| | Bucket `climatelens-iu-models` | Versioned model bundles and the `LATEST` pointer |
+| | Bucket `climatelens-iu-tfstate` | Terraform state (versioned) |
+| **Artifact Registry** | Docker repository `climatelens` | Container images; immutable `vX.Y.Z` tags, keeps the 10 newest |
+| **Cloud Scheduler** | Job `climatelens-daily-ingest` | Daily 15:30: fetch new observations, rebuild features |
+| | Job `climatelens-monthly-train` | 1st of the month 11:00: evaluate, retrain, publish |
+| **IAM** | Service account `climatelens-run` | Runtime identity of Cloud Run; read/write on the two data buckets only |
+| | Service account `climatelens-scheduler` | Signs the scheduler's OIDC tokens |
+| | Service account `climatelens-deployer` | Used by GitLab CI: push images, deploy this one service |
+| | 6 least-privilege role bindings | Bucket, repository, service and impersonation permissions |
+| **Workload Identity Federation** | Pool `gitlab` + provider `gitlab-com` | Lets GitLab CI act as the deployer without keys - only this project, only protected tags |
+| **Firebase Hosting** | Firebase project, site `climatelens-iu`, version, release | Forwards all requests to Cloud Run |
+| | Custom domain `climatelens.sulemanb.com` | Google-managed HTTPS certificate |
+| **Billing** | Budget alert, EUR 10/month | Email alerts at 50 / 90 / 100 % and on forecast overspend |
+| **Service Usage** | 15 enabled APIs | Run, Artifact Registry, Scheduler, Storage, IAM, STS, Firebase, Billing, Logging, Monitoring, ... |
 
-```text
-climatelens/
-├── src/climatelens/       Application source code
-├── tests/                 Automated tests
-├── infra/                 Terraform (GCP infrastructure) and its bootstrap
-├── Dockerfile             Production image (non-root, hash-locked dependencies)
-└── .gitlab-ci.yml         CI and deployment pipeline
-```
+Expected running cost: well under EUR 1/month (mostly image storage); all
+compute fits Google's free tiers.
 
-The project keeps feature engineering, modelling, and evaluation independent of GCP. Cloud I/O is isolated in the data and job layers so the core workflow remains testable locally.
+---
 
-## Local Development
+## DevOps practices
+
+- **Infrastructure as code:** two-stage Terraform - a small bootstrap creates
+  the state bucket, the main configuration everything else. The budget alert
+  is created before any billable service.
+- **CI/CD (GitLab):** every code change runs lint, tests (92 automated tests)
+  and a container build with smoke test. A release is a protected git tag
+  `vX.Y.Z`: the pipeline checks the tag against the code version, builds and
+  tests the image, pushes it with an immutable tag and deploys exactly that
+  image (by digest) to Cloud Run, then checks the live site.
+- **No secrets or keys:** GitLab CI authenticates through Workload Identity
+  Federation with short-lived tokens; Cloud Run and Scheduler use attached
+  service accounts; the scheduler's calls to `/jobs/*` carry Google-signed
+  tokens that the service verifies.
+- **Least privilege:** one service account per role, each limited to the
+  resources it needs.
+- **Reproducibility:** every dependency pinned with hashes; deterministic
+  training (retraining on the same data gives identical models); versioned,
+  immutable model bundles that record their training data, parameters and
+  evaluation.
+- **Reliability:** a missed daily run is caught up automatically; running
+  instances pick up new data and models within a minute; a quality gate
+  blocks worse models; the non-root container fails closed when no model is
+  available.
+
+---
+
+## Run it yourself
+
+Requirements: Python 3.12, Docker; Terraform and the Google Cloud CLI for the
+cloud part.
 
 ```bash
-make install    # exact, hash-checked dependencies from requirements-dev.lock
-make lint       # ruff check + format check
-make test       # pytest (offline, synthetic data)
-make serve      # dashboard on http://localhost:8000 with auto-reload
+make install                              # dependencies (hash-locked)
+make test                                 # automated tests, offline
+climatelens ingest --backfill-years 3     # download 3 years of DWD data
+climatelens features                      # build the feature table
+climatelens train                         # walk-forward evaluation + training
+make serve                                # dashboard on http://localhost:8000
 ```
 
-Every dependency, including transitive ones, is pinned with hashes in
-`requirements.lock` (runtime image) and `requirements-dev.lock` (CI and
-development). After editing `pyproject.toml`, regenerate both with `make lock`
-(needs [uv](https://docs.astral.sh/uv/)).
+Container: `make build`, then `make run` (dashboard on http://localhost:8080).
 
-Configuration comes from `CLIMATELENS_*` environment variables (or a local
-`.env`); `.env.example` lists them. Secrets are never committed.
+Cloud: `infra/bootstrap` once, then `terraform apply` in `infra/`. Releases:
+bump the version in `src/climatelens/__init__.py`, commit, and run
+`make release`; GitLab CI deploys it.
 
-The pipeline, end to end:
-
-```bash
-climatelens ingest --backfill-years 3   # DWD observations -> data/raw/
-climatelens features                    # -> data/features/features.parquet
-climatelens evaluate                    # walk-forward models vs baselines (report only)
-climatelens train                       # evaluate, refit, write models/<version>/
-```
-
-Afterwards, `make pipeline` fetches the latest days, rebuilds features and
-retrains.
-
-### Container
-
-```bash
-make build                # production image (non-root, hash-checked deps)
-make container-pipeline   # ingest -> features -> train inside the container
-make run                  # dashboard from the container on http://localhost:8080
-```
-
-`data/` and `models/` are mounted into the container, so the image itself
-stays stateless.
-
-### Releases
-
-The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.2.0).
-A release is a git tag `vX.Y.Z`; GitLab CI does the rest:
-
-```bash
-# bump __version__, commit, then:
-make release        # tags v1.2.0 and pushes the tag
-```
-
-The tag pipeline runs lint and tests, builds the image, smoke-tests it, checks
-that the tag matches `__version__`, pushes `vX.Y.Z` to Artifact Registry (tags
-are immutable, so a version is released only once) and deploys exactly that
-image to Cloud Run by digest, followed by a live check. CI authenticates to
-Google Cloud through Workload Identity Federation with GitLab's short-lived
-OIDC token - no service-account key exists - and only protected `v*` tags are
-accepted. `make release-image` remains as a manual fallback.
+---
 
 ## API
 
-| Method | Path | Access | Description |
-|---|---|---|---|
-| GET | `/` | public | Dashboard: frost, solar and wind cards for all cities |
-| GET | `/forecast` | public | Forecasts for tomorrow for every city |
-| GET | `/forecast/{city}` | public | Forecast for tomorrow for one city (slug, e.g. `berlin`) |
-| GET | `/cities` | public | The 12 cities and their DWD stations |
-| GET | `/metrics` | public | Walk-forward scores of the served model vs baselines (`?per_city=true`) |
-| GET | `/health` | public | Liveness (`/healthz` also works locally; Cloud Run reserves it externally) |
-| POST | `/jobs/ingest` | token | Fetch recent DWD data and rebuild features |
-| POST | `/jobs/train` | token | Evaluate, retrain and publish a new model bundle |
-
-Job endpoints require `Authorization: Bearer $CLIMATELENS_JOBS_TOKEN` and are
-disabled when no token is set. Forecasts older than three days are flagged
-`stale`.
-
-## Model Evaluation
-
-ClimateLens will use expanding walk-forward validation. Randomly shuffled train/test splits are intentionally excluded because weather data is time-dependent and can otherwise introduce look-ahead bias.
-
-Required baselines are:
-
-- Persistence: tomorrow equals today
-- Climatological mean: historical mean for the day of year
-- Majority class: always predict no frost
-
-Regression models will report MAE and RMSE. Frost classification will report accuracy and Brier score. Results will be recorded per target and per city for the project report.
-
-## Cloud Deployment
-
-ClimateLens runs on Google Cloud in `europe-west3` (Frankfurt), project
-`climatelens-iu`.
-
-**Live dashboard:** [climatelens.sulemanb.com](https://climatelens.sulemanb.com)
-(direct Cloud Run URL: [climatelens-273124305778.europe-west3.run.app](https://climatelens-273124305778.europe-west3.run.app))
-
-Cloud Run's built-in domain mapping is not offered in `europe-west3` (and is a
-preview feature Google does not recommend for production), so **Firebase
-Hosting** fronts the service: it forwards every request to Cloud Run, serves
-the Google-managed certificate for `climatelens.sulemanb.com`, and does not
-cache dynamic responses. Cloudflare stays the authoritative DNS with a
-DNS-only `CNAME climatelens -> climatelens-iu.web.app`. A load balancer would
-have cost more than the whole monthly budget.
-
-| Component | Service |
+| Path | Description |
 |---|---|
-| Dashboard, API, job endpoints | Cloud Run (scales to zero, 1 vCPU / 2 GiB) |
-| Raw data and feature table | Cloud Storage `climatelens-iu-data` |
-| Model bundles and `LATEST` pointer | Cloud Storage `climatelens-iu-models` |
-| Container images | Artifact Registry `climatelens` (keeps the 10 newest) |
-| Custom domain + HTTPS | Firebase Hosting (rewrite to Cloud Run, Google-managed certificate); Cloudflare DNS-only CNAME |
-| Daily ingest 15:30, monthly retrain on the 1st, 11:00 (Europe/Berlin) | Cloud Scheduler with Google-signed OIDC tokens |
-| GitLab CI to GCP without keys | Workload Identity Federation (pool `gitlab`) |
-| Cost guard | Billing budget alert, EUR 10/month, counting usage before credits |
+| `/` | Dashboard |
+| `/forecast`, `/forecast/{city}` | Forecasts for tomorrow (JSON), e.g. `/forecast/berlin` |
+| `/cities` | The 12 cities and their DWD stations |
+| `/metrics` | Walk-forward scores of the served models vs baselines |
+| `/health` | Liveness |
+| `/docs` | Interactive API documentation |
 
-### Automation
+---
 
-No manual step is needed to keep the forecasts current:
+## Responsible use
 
-| Job | Schedule (Europe/Berlin) | What it does |
-|---|---|---|
-| Daily ingest | every day, **15:30** | Fetches the newest DWD observations and rebuilds the feature table, so the dashboard forecasts tomorrow from the latest data |
-| Monthly retrain | 1st of the month, 11:00 | Walk-forward evaluation, refit of the best model per target and horizon, publishes a new model bundle |
+ClimateLens is a technical demonstrator for educational and research
+purposes. Its forecasts are statistical estimates and must not be relied on
+for medical, agricultural or safety-critical decisions. For official forecasts
+and warnings, consult the [Deutscher Wetterdienst](https://www.dwd.de).
 
-- **Why 15:30:** DWD publishes a day's observations during the following day
-  (observed between 07:30 and 12:46 UTC), so an afternoon run picks up
-  yesterday and the forecast for tomorrow is 2 days ahead of the data.
-- **Why monthly:** forecasts already use fresh data every day; one month adds
-  only ~3 % to ~3 years of training data, and the published accuracy is measured
-  with monthly retraining.
-- **Secured:** Cloud Scheduler calls the protected `/jobs/ingest` and
-  `/jobs/train` endpoints with a Google-signed OIDC token; the service checks
-  its signature, audience and the scheduler's service account.
-- **Self-healing:** a missed daily run is caught up by the next one (up to 60
-  days back), and every Cloud Run instance picks up new data or a new model
-  within a minute.
+Data source: Deutscher Wetterdienst (DWD), open data.
 
-### Infrastructure as code
+## Author and licence
 
-All of it is Terraform in [`infra/`](infra/):
-
-```bash
-cd infra/bootstrap && terraform init && terraform apply   # once: state bucket + core APIs
-cd infra && terraform init && terraform plan && terraform apply
-```
-
-Deployment principles:
-
-- No service-account JSON keys anywhere: people use `gcloud` logins, GitLab CI uses Workload Identity Federation, Cloud Run and Scheduler use attached service accounts
-- One least-privilege service account per role (runtime, scheduler, deployer)
-- Terraform owns the infrastructure; CI owns the running image
-- The budget alert is created before any billable API is enabled; storage and registry have lifecycle rules
-- Public access is limited to the dashboard and read-only API; `/jobs/*` accepts only Cloud Scheduler's token (signature, audience and service account checked)
-
-The project uses a Google Cloud trial credit. The budget alert is a monitoring
-control, not a hard spending limit; expected running cost is well under
-EUR 1/month, mostly container image storage.
-
-## Responsible Use
-
-ClimateLens is a technical demonstrator for educational and research purposes. Its forecasts are city-level estimates and may be affected by data gaps, station coverage, model limitations, and weather uncertainty.
-
-**Technical demonstrator. Not medical, agricultural, or safety advice.**
-
-## License
-
-This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
+Suleman Butt - MSc DevOps & Cloud Computing, IU International University.
+Licensed under the MIT License, see [`LICENSE`](LICENSE).
