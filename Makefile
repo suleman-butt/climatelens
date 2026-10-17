@@ -1,4 +1,4 @@
-.PHONY: install lock lint test pipeline serve build run container-pipeline version release-image deploy destroy
+.PHONY: install lock lint test pipeline serve build run container-pipeline version release release-image deploy destroy
 
 IMAGE ?= climatelens:local
 # Release version: climatelens.__version__ is the single source of truth.
@@ -49,14 +49,24 @@ container-pipeline:
 version:
 	@echo $(VERSION)
 
-# Build and push v$(VERSION) to Artifact Registry. Tags are immutable there, so
-# bump __version__ before releasing again. (Phase 8 moves this into CI.)
+# Release v$(VERSION): tag the current commit and push the tag. GitLab CI then
+# tests, builds, pushes the immutable image and deploys it to Cloud Run.
+# Bump __version__ (and commit) first; a version can be released only once.
+release:
+	@test -z "$$(git status --porcelain)" || { echo "Commit or stash your changes first."; exit 1; }
+	git tag -a v$(VERSION) -m "ClimateLens $(VERSION)"
+	git push origin v$(VERSION)
+
+# Fallback when CI is unavailable: build and push v$(VERSION) from this machine.
 release-image:
 	docker build --target api --build-arg VERSION=$(VERSION) -t $(REGISTRY):v$(VERSION) .
 	docker push $(REGISTRY):v$(VERSION)
 
+# Deployments run in GitLab CI on version tags (see `make release`).
 deploy:
-	@echo "Deployment is added with the Terraform infrastructure (Phase 7)."
+	@echo "Deploys run in GitLab CI: bump __version__, commit, then 'make release'."
 
+# Remove all cloud resources (asks for confirmation). The state bucket from
+# infra/bootstrap is kept; destroy it separately if the project is retired.
 destroy:
-	@echo "Destroy is added with the Terraform infrastructure (Phase 7)."
+	cd infra && terraform destroy

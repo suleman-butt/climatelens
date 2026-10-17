@@ -2,6 +2,8 @@ stages:
   - lint
   - test
   - container
+  - release
+  - deploy
 
 default:
   image: python:3.12.10-slim-bookworm
@@ -10,6 +12,14 @@ default:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # Google Cloud targets (identifiers, not secrets).
+  GCP_PROJECT: climatelens-iu
+  GCP_REGION: europe-west3
+  RUN_SERVICE: climatelens
+  REGISTRY: europe-west3-docker.pkg.dev/climatelens-iu/climatelens/climatelens
+  DEPLOYER_SA: climatelens-deployer@climatelens-iu.iam.gserviceaccount.com
+  WIF_PROVIDER: //iam.googleapis.com/projects/273124305778/locations/global/workloadIdentityPools/gitlab/providers/gitlab-com
+  LIVE_URL: https://climatelens-273124305778.europe-west3.run.app
 
 # Files that can change what CI builds or tests. A push that touches none of
 # them - e.g. only README.md - starts no pipeline and uses no CI
@@ -27,6 +37,8 @@ variables:
 
 workflow:
   rules:
+    # A release: tag vX.Y.Z (protected) -> test, build, push, deploy.
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: *pipeline-triggers
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
@@ -71,28 +83,133 @@ test:
         coverage_format: cobertura
         path: coverage.xml
 
-# Build the production image and prove it starts, serves and can load LightGBM.
-# Pushing to a registry and deploying are added with the cloud infrastructure.
-container:
-  stage: container
+# --- Container: build and smoke-test the production image --------------------
+
+.docker:
   image: docker:27
   services:
     - docker:27-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
-    IMAGE: climatelens:$CI_COMMIT_SHORT_SHA
   before_script:
-    - apk add --no-cache curl > /dev/null
+    - apk add --no-cache curl jq > /dev/null
+
+# Starts $IMAGE and proves it runs as the non-root user, loads LightGBM, serves
+# on $PORT and fails closed (503) while no model is published.
+.smoke-test: &smoke-test
+  - docker run --rm "$IMAGE" sh -c 'test "$(id -u)" = 10001 && climatelens --version && python -c "import lightgbm, climatelens.api"'
+  - docker run -d --name smoke -p 8080:8080 "$IMAGE"
+  - for i in $(seq 1 30); do curl -fs http://docker:8080/health && break; sleep 1; done
+  - curl -fs http://docker:8080/health | grep -q '"ok"'
+  - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/forecast)" = "503"
+  - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/)" = "503"
+
+# Branch pipelines: build and smoke-test only (releases build their own image).
+container:
+  extends: .docker
+  stage: container
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  variables:
+    IMAGE: climatelens:$CI_COMMIT_SHORT_SHA
   script:
     - docker build --target api -t "$IMAGE" .
     - docker image ls "$IMAGE"
-    # Runs as the non-root user, with the OpenMP runtime LightGBM needs.
-    - docker run --rm "$IMAGE" sh -c 'test "$(id -u)" = 10001 && climatelens --version && python -c "import lightgbm, climatelens.api"'
-    # Serves on $PORT: liveness is up, forecasts are 503 until a model is published.
-    - docker run -d --name smoke -p 8080:8080 "$IMAGE"
-    - for i in $(seq 1 30); do curl -fs http://docker:8080/healthz && break; sleep 1; done
-    - curl -fs http://docker:8080/healthz | grep -q '"ok"'
-    - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/forecast)" = "503"
-    - test "$(curl -s -o /dev/null -w '%{http_code}' http://docker:8080/)" = "503"
+    - *smoke-test
   after_script:
     - docker logs smoke 2>&1 | tail -20 || true
+
+# --- Release: tag vX.Y.Z -> immutable image vX.Y.Z -> Cloud Run --------------
+
+.release-rules:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+# GitLab issues a short-lived OIDC token for this job; Google's Workload
+# Identity Federation accepts it only for this project on protected refs and
+# lets the job act as the deployer service account. No key is stored anywhere.
+.gcp-oidc:
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/projects/273124305778/locations/global/workloadIdentityPools/gitlab/providers/gitlab-com
+
+release-image:
+  extends: [.docker, .gcp-oidc, .release-rules]
+  stage: release
+  interruptible: false
+  variables:
+    IMAGE: climatelens:$CI_COMMIT_TAG
+  script:
+    - VERSION="${CI_COMMIT_TAG#v}"
+    # The tag must match the code's version (single source of truth).
+    - CODE_VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/climatelens/__init__.py)"
+    - |
+      if [ "$VERSION" != "$CODE_VERSION" ]; then
+        echo "Tag $CI_COMMIT_TAG does not match __version__ $CODE_VERSION"; exit 1
+      fi
+    - docker build --target api --build-arg VERSION="$VERSION" -t "$IMAGE" .
+    - *smoke-test
+    # Exchange the GitLab token for a Google access token (STS), then act as
+    # the deployer (IAM Credentials). Tokens stay in shell variables only.
+    - |
+      FEDERATED=$(curl -sf https://sts.googleapis.com/v1/token \
+        --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+        --data-urlencode "audience=${WIF_PROVIDER}" \
+        --data-urlencode "scope=https://www.googleapis.com/auth/cloud-platform" \
+        --data-urlencode "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
+        --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:jwt" \
+        --data-urlencode "subject_token=${GCP_ID_TOKEN}" | jq -r .access_token)
+      ACCESS_TOKEN=$(curl -sf -X POST \
+        -H "Authorization: Bearer ${FEDERATED}" -H "Content-Type: application/json" \
+        -d '{"scope": ["https://www.googleapis.com/auth/cloud-platform"], "lifetime": "1200s"}' \
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${DEPLOYER_SA}:generateAccessToken" \
+        | jq -r .accessToken)
+      test -n "$ACCESS_TOKEN" && test "$ACCESS_TOKEN" != "null"
+      echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${GCP_REGION}-docker.pkg.dev"
+    # Registry tags are immutable: re-releasing an existing version fails here.
+    - docker tag "$IMAGE" "$REGISTRY:$CI_COMMIT_TAG"
+    - docker push "$REGISTRY:$CI_COMMIT_TAG"
+    - DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY:$CI_COMMIT_TAG" | cut -d@ -f2)"
+    - echo "Pushed $REGISTRY:$CI_COMMIT_TAG @ $DIGEST"
+    - printf 'IMAGE_DIGEST=%s\nRELEASE_VERSION=%s\n' "$DIGEST" "$VERSION" > release.env
+  after_script:
+    - docker logout "https://${GCP_REGION}-docker.pkg.dev" || true
+    - docker logs smoke 2>&1 | tail -20 || true
+  artifacts:
+    reports:
+      dotenv: release.env
+
+deploy:
+  extends: [.gcp-oidc, .release-rules]
+  stage: deploy
+  image: google/cloud-sdk:589.0.0-slim
+  interruptible: false
+  needs: [release-image]
+  resource_group: production
+  environment:
+    name: production
+    url: $LIVE_URL
+  script:
+    # Credential configuration for gcloud: reads the GitLab token from a file
+    # and impersonates the deployer. Contains no secret itself.
+    - echo "$GCP_ID_TOKEN" > "$CI_PROJECT_DIR/.gitlab-oidc-token"
+    - |
+      cat > "$CI_PROJECT_DIR/gcp-credentials.json" <<EOF
+      {
+        "type": "external_account",
+        "audience": "${WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "credential_source": {"file": "${CI_PROJECT_DIR}/.gitlab-oidc-token"},
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${DEPLOYER_SA}:generateAccessToken"
+      }
+      EOF
+    - gcloud auth login --cred-file="$CI_PROJECT_DIR/gcp-credentials.json" --quiet
+    # Deploy the exact image that was tested and pushed (by digest).
+    - gcloud run services update "$RUN_SERVICE" --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$REGISTRY@$IMAGE_DIGEST" --quiet
+    # Live check: healthy and serving the released version.
+    - curl -fs "$LIVE_URL/health" | grep -q '"ok"'
+    - curl -fs "$LIVE_URL/" | grep -q "App v${RELEASE_VERSION}"
+    - echo "Deployed v${RELEASE_VERSION} to $LIVE_URL"
+  after_script:
+    - rm -f "$CI_PROJECT_DIR/.gitlab-oidc-token" "$CI_PROJECT_DIR/gcp-credentials.json"

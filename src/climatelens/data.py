@@ -465,10 +465,13 @@ def write_model_bundle(
     manifest: dict[str, object],
     metrics: dict[str, object],
     base_uri: str,
+    publish: bool = True,
 ) -> str:
     """Write ``<base>/<version>/`` (one joblib per target + JSON) and move LATEST.
 
-    Bundles are immutable: an existing version is never overwritten.
+    Bundles are immutable: an existing version is never overwritten. With
+    ``publish=False`` the bundle is stored for inspection but LATEST - the
+    version the service serves - stays where it was.
     """
     import joblib
 
@@ -486,9 +489,19 @@ def write_model_bundle(
     _write_bytes(
         _join(bundle, "manifest.json"), json.dumps(manifest, indent=2, default=str).encode()
     )
-    _write_bytes(_join(base_uri, LATEST_POINTER), (version + "\n").encode())
-    log.info("wrote model bundle", extra={"version": version, "uri": bundle})
+    if publish:
+        _write_bytes(_join(base_uri, LATEST_POINTER), (version + "\n").encode())
+    log.info("wrote model bundle", extra={"version": version, "uri": bundle, "published": publish})
     return bundle
+
+
+def read_bundle_metrics(base_uri: str, version: str | None = None) -> dict[str, object] | None:
+    """The walk-forward metrics of a bundle (default: the served one), or None."""
+    version = version or latest_model_version(base_uri)
+    if version is None:
+        return None
+    data = _read_bytes(_join(base_uri, version, "metrics.json"))
+    return json.loads(data) if data else None
 
 
 def latest_model_version(base_uri: str) -> str | None:

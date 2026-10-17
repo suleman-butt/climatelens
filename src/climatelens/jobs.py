@@ -84,7 +84,7 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
-    _print(run_train(get_settings()))
+    _print(run_train(get_settings(), force=args.force))
     return 0
 
 
@@ -111,6 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.set_defaults(func=_cmd_evaluate)
 
     train = sub.add_parser("train", help="evaluate, refit the best model per target, save it")
+    train.add_argument(
+        "--force", action="store_true", help="publish even if the quality gate fails"
+    )
     train.set_defaults(func=_cmd_train)
 
     return parser

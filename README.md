@@ -134,18 +134,21 @@ stays stateless.
 
 ### Releases
 
-The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.1.1). A
-release is a git tag `vX.Y.Z` plus an image with the same tag in Artifact
-Registry, where tags are immutable:
+The version lives in `__version__` in `src/climatelens/__init__.py` (currently 1.2.0).
+A release is a git tag `vX.Y.Z`; GitLab CI does the rest:
 
 ```bash
-make version         # 1.1.1
-make release-image   # build + push europe-west3-docker.pkg.dev/.../climatelens:v1.0.0
+# bump __version__, commit, then:
+make release        # tags v1.2.0 and pushes the tag
 ```
 
-Bump `__version__` before the next release; pushing an existing tag again is
-rejected. The CI `container` job builds the same image on every push
-and checks that it starts, serves `/healthz` and runs as the non-root user.
+The tag pipeline runs lint and tests, builds the image, smoke-tests it, checks
+that the tag matches `__version__`, pushes `vX.Y.Z` to Artifact Registry (tags
+are immutable, so a version is released only once) and deploys exactly that
+image to Cloud Run by digest, followed by a live check. CI authenticates to
+Google Cloud through Workload Identity Federation with GitLab's short-lived
+OIDC token - no service-account key exists - and only protected `v*` tags are
+accepted. `make release-image` remains as a manual fallback.
 
 ## API
 
