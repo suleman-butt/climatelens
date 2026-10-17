@@ -6,9 +6,10 @@ machine learning from German Weather Service (DWD) observations.**
 **Live:** [climatelens.sulemanb.com](https://climatelens.sulemanb.com)
 
 This project is maintained on GitLab, with a mirror kept on GitHub for
-visibility and easier discovery:
-[GitLab](https://gitlab.com/sulemanb/devops-cloud/climatelens) |
-[GitHub](https://github.com/suleman-butt/climatelens)
+visibility and easier discovery.
+
+[![GitLab - Primary](https://img.shields.io/badge/GitLab-Primary-FC6D26?logo=gitlab&logoColor=white)](https://gitlab.com/sulemanb/devops-cloud/climatelens)
+[![GitHub - Mirror](https://img.shields.io/badge/GitHub-Mirror-181717?logo=github&logoColor=white)](https://github.com/suleman-butt/climatelens)
 
 ClimateLens was developed by Suleman Butt as part of the MSc DevOps & Cloud
 Computing programme at IU International University. It demonstrates how a
