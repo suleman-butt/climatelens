@@ -598,3 +598,7 @@ Phase 9 complete.
   importance, quality gate), 04 deployment and testing (test suite plus 13 live
   checks against the service). They call the package code rather than
   re-implementing it; report figures are saved to `notebooks/figures/`.
+- Figures collected in [`diagrams/`](../diagrams/) and numbered 1-5: cloud
+  architecture, data ingestion and feature pipeline, CI/CD pipeline (new:
+  branch and release pipelines, keyless access to Google Cloud), dashboard
+  screenshot and walk-forward validation (new). The README shows them.

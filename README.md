@@ -40,7 +40,7 @@ documented at [`/docs`](https://climatelens.sulemanb.com/docs).
 
 ## How it works
 
-![How ClimateLens works](diagrams/how-it-works.svg)
+![How ClimateLens works](diagrams/figure-2-data-ingestion-and-feature-pipeline.svg)
 
 1. **Collect** - every afternoon the service downloads the newest daily
    measurements (temperature, wind, humidity, pressure, cloud cover, rain,
@@ -73,6 +73,8 @@ with a delay). Random train/test splits are not used, because
 they would leak future weather into training. Every model must beat simple
 baselines; where it does not, the baseline is served instead.
 
+![Walk-forward validation](diagrams/figure-5-walk-forward-validation.svg)
+
 | Forecast | Metric | 1 day ahead | **2 days ahead** (used for tomorrow) | 3 days ahead |
 |---|---|---|---|---|
 | Frost | Brier score (lower is better) | 0.056 | **0.102** | 0.114 |
@@ -94,7 +96,7 @@ worse than the model it would replace.
 
 ## Cloud architecture
 
-![ClimateLens cloud architecture](diagrams/architecture.svg)
+![ClimateLens cloud architecture](diagrams/figure-1-cloud-architecture.svg)
 
 Editable diagram sources (Excalidraw) are in [`diagrams/`](diagrams/).
 
@@ -157,6 +159,8 @@ in the Google Cloud console under Billing > Reports.
 ---
 
 ## DevOps practices
+
+![ClimateLens CI/CD pipeline](diagrams/figure-3-cicd-pipeline.svg)
 
 - **Infrastructure as code:** two-stage Terraform - a small bootstrap creates
   the state bucket, the main configuration everything else. The budget alert
@@ -257,7 +261,8 @@ or re-imported with `terraform import`.
   collection and preparation, feature engineering, model training and
   evaluation, deployment and testing
 - [Changelog](CHANGELOG.md) - what changed in each release
-- [Diagrams](diagrams/) - editable Excalidraw sources of the figures above
+- [Diagrams](diagrams/) - the figures above and a dashboard screenshot,
+  with editable Excalidraw sources
 
 ---
 
