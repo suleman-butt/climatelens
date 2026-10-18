@@ -15,6 +15,9 @@ releases are built and deployed by GitLab CI.
   (`diagrams/`).
 - Process documentation: decision log, project log and evaluation results
   (`docs/`), and this changelog.
+- Jupyter notebooks (`notebooks/`) walking through data collection and
+  preparation, feature engineering, model training and evaluation, and
+  deployment and testing, using the production package code.
 
 ## [1.3.1] - 2026-10-17
 

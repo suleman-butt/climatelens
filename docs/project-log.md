@@ -590,3 +590,11 @@ Phase 9 complete.
 - Public process documentation added: this log, the
   [decision log](decisions.md), [evaluation results](evaluation-results.md)
   and a [changelog](../CHANGELOG.md).
+- Notebooks ([`notebooks/`](../notebooks/)), saved with outputs: 01 data
+  collection and preparation (live DWD download, validation, completeness,
+  exploration), 02 feature engineering (targets, feature groups, look-ahead and
+  gap checks), 03 model training and evaluation (walk-forward scheme, baselines
+  vs LightGBM per target, horizon and city, frost reliability, feature
+  importance, quality gate), 04 deployment and testing (test suite plus 13 live
+  checks against the service). They call the package code rather than
+  re-implementing it; report figures are saved to `notebooks/figures/`.

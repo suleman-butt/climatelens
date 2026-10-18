@@ -253,6 +253,9 @@ or re-imported with `terraform import`.
   phase, with measurements and the problems solved along the way
 - [Evaluation results](docs/evaluation-results.md) - walk-forward scores by
   forecast horizon and per city
+- [Notebooks](notebooks/) - the ML workflow step by step, with outputs: data
+  collection and preparation, feature engineering, model training and
+  evaluation, deployment and testing
 - [Changelog](CHANGELOG.md) - what changed in each release
 - [Diagrams](diagrams/) - editable Excalidraw sources of the figures above
 
