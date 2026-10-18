@@ -73,7 +73,7 @@ with a delay). Random train/test splits are not used, because
 they would leak future weather into training. Every model must beat simple
 baselines; where it does not, the baseline is served instead.
 
-![Walk-forward validation](diagrams/figure-5-walk-forward-validation.svg)
+![Walk-forward validation](notebooks/figures/walk_forward_scheme.png)
 
 | Forecast | Metric | 1 day ahead | **2 days ahead** (used for tomorrow) | 3 days ahead |
 |---|---|---|---|---|

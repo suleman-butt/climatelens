@@ -1,6 +1,7 @@
 # Diagrams
 
-Figures of the project report. Each Excalidraw drawing has its editable source
+Figures of the project report. Figure 5 is generated from the data by notebook 03
+and lives with the notebooks. Each Excalidraw drawing has its editable source
 (`.excalidraw`, open at [excalidraw.com](https://excalidraw.com)) next to the
 exported SVG.
 
@@ -10,4 +11,4 @@ exported SVG.
 | 2 | [figure-2-data-ingestion-and-feature-pipeline.svg](figure-2-data-ingestion-and-feature-pipeline.svg) | Data ingestion and feature pipeline: collect, learn, forecast, serve; why the model looks 2 days ahead |
 | 3 | [figure-3-cicd-pipeline.svg](figure-3-cicd-pipeline.svg) | CI/CD deployment pipeline: branch and release pipelines, keyless access to Google Cloud |
 | 4 | [figure-4-dashboard.png](figure-4-dashboard.png) | Dashboard interface (live site, 18 Oct 2026, Berlin, Munich and Hamburg) |
-| 5 | [figure-5-walk-forward-validation.svg](figure-5-walk-forward-validation.svg) | Walk-forward validation scheme: 25 monthly folds, expanding training window |
+| 5 | [walk_forward_scheme.png](../notebooks/figures/walk_forward_scheme.png) | Walk-forward validation scheme: the 25 real monthly folds, plotted by [notebook 03](../notebooks/03_model_training_and_evaluation.ipynb) |

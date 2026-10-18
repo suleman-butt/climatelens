@@ -11,9 +11,9 @@ releases are built and deployed by GitLab CI.
 ### Added
 - Custom domain `climatelens.sulemanb.com` through Firebase Hosting in front of
   Cloud Run, with a Google-managed certificate (infrastructure, Terraform).
-- Figures in `diagrams/`, numbered 1-5: cloud architecture, data ingestion and
-  feature pipeline, CI/CD pipeline, dashboard screenshot and walk-forward
-  validation (Excalidraw sources included).
+- Figures in `diagrams/`, numbered 1-4: cloud architecture, data ingestion and
+  feature pipeline, CI/CD pipeline (Excalidraw sources included) and a dashboard
+  screenshot. The walk-forward validation chart is plotted by notebook 03.
 - Process documentation: decision log, project log and evaluation results
   (`docs/`), and this changelog.
 - Jupyter notebooks (`notebooks/`) walking through data collection and
