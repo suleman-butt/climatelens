@@ -110,8 +110,10 @@ load balancer would have cost more than the whole monthly budget.
 
 ### Google Cloud resources
 
-All 41 resources are defined in Terraform ([`infra/`](infra/)); none were
-created by hand.
+Everything is defined in Terraform ([`infra/`](infra/)); nothing was created
+by hand. That is 41 Terraform resources: 16 infrastructure resources, 3 service
+accounts, 7 IAM bindings and 15 API enablements (34 in the main configuration,
+7 in the bootstrap that creates the state bucket).
 
 | Service | Resource | Purpose |
 |---|---|---|
